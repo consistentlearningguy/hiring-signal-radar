@@ -18,7 +18,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --omit=optional
       - run: npm test
       - name: Build production site
         env:
