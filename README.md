@@ -1,6 +1,6 @@
 # Hiring Signal Radar
 
-[View the live dashboard](https://consistentlearningguy.github.io/hiring-signal-radar/)
+[View the live dashboard](https://twelfthlabor.github.io/hiring-signal-radar/)
 
 Hiring Signal Radar is a small, transparent dashboard for watching hiring activity at technology companies. It turns public employer career-board postings into a readable signal: what is open now, where teams are hiring, which functions are expanding, and which roles recently appeared or disappeared.
 
