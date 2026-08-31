@@ -2,6 +2,12 @@
 
 [View the live dashboard](https://twelfthlabor.github.io/hiring-signal-radar/)
 
+## About
+
+This project started with a simple question: can public hiring activity make company growth easier to see without relying on a black-box data vendor? Hiring Signal Radar is my answer. It gathers the job postings companies publish themselves, keeps the trail of what was observed, and turns that trail into a dashboard people can inspect and question.
+
+I built it for investors, researchers, job seekers, and anyone curious about where technology companies are putting their energy. The goal is not to make a dramatic prediction from a single number. It is to make a useful signal more honest by showing the source, the timestamp, the definitions, and the limitations alongside the chart.
+
 Hiring Signal Radar is a small, transparent dashboard for watching hiring activity at technology companies. It turns public employer career-board postings into a readable signal: what is open now, where teams are hiring, which functions are expanding, and which roles recently appeared or disappeared.
 
 This is an observation tool, not a measure of hires, workforce size, or investment advice.
