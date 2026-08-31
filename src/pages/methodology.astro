@@ -1,0 +1,58 @@
+---
+import Layout from '@/layouts/Layout.astro';
+import statusRaw from '../../public/data/status.json';
+import type { CollectionStatus } from '@/lib/types';
+const status = statusRaw as CollectionStatus;
+---
+
+<Layout title="Methodology — Hiring Signal Radar" description="How Hiring Signal Radar collects, classifies, and reports public job postings.">
+  <div class="page-shell method-page">
+    <aside>
+      <p class="eyebrow orange">THE FIELD MANUAL</p>
+      <h1>Transparent by design.</h1>
+      <p>Hiring Signal Radar is a deliberately narrow observation tool. It reports what company job boards publish and makes no claim to see the whole company.</p>
+    </aside>
+    <div>
+      <section class="method-section">
+        <p class="section-kicker">01 / SOURCES</p><h2>Official investor signals; broader job discovery</h2>
+        <p>Once a day, the core collector reads public job data from the official <a class="text-btn" href="https://developer.greenhouse.io/job-board.html">Greenhouse Job Board API ↗</a>, <a class="text-btn" href="https://github.com/lever/postings-api">Lever Postings API ↗</a>, and <a class="text-btn" href="https://developers.ashbyhq.com/docs/public-job-posting-api">Ashby Job Postings API ↗</a>. Only these employer-direct sources power investor rankings, company trends, comparisons, and removal signals.</p>
+        <p>The job-seeker view uses the same employer-direct sources with a broader company universe. Third-party aggregators and social networks are deliberately not collected; every role must be traceable to a public employer-controlled board.</p>
+        <p>We store only structured metadata: company, market symbol when relevant, title, function, job-seeker career area, inferred experience level, source location, normalized country, source URL, source update timestamp when available, and first/last-seen dates. Complete job descriptions are not retained.</p>
+      </section>
+      <section class="method-section">
+        <p class="section-kicker">02 / ROLE STATE</p><h2>Absence is not immediately removal</h2>
+        <p>A role is newly opened on the first successful collection where it appears. It is not marked removed until it is missing from <strong>two consecutive successful collections</strong>. A failed API request does not increment that count.</p>
+        <p>When a source fails, its last valid snapshot stays in place and the company is visibly marked stale. This avoids turning an outage into a false mass-removal signal.</p>
+      </section>
+      <section class="method-section">
+        <p class="section-kicker">03 / CLASSIFICATION</p><h2>Deterministic, inspectable rules</h2>
+        <p>Title and department keywords first place each posting into a detailed career category. The investor view then rolls those categories into Engineering, AI / Data, Product, Sales / Marketing, Customer, Operations, Hardware / Field, Clinical / Science, Corporate, or Other. This keeps materially different investment themes visible instead of hiding them in a catch-all bucket.</p>
+        <p>Title keywords also classify experience as Internship, Entry level, Mid level, Senior, Lead / Manager, Executive, or Unspecified. Ambiguous titles remain Unspecified rather than being guessed from the description.</p>
+        <p>The job-seeker view uses a more detailed career taxonomy than the investor view, separating areas such as clinical science, skilled trades, automotive service, systems integration, supply chain, consulting, quality and safety, finance, people, and program operations.</p>
+        <p>The rules are useful for directional comparison, not organizational accounting. Ambiguous titles may land in Other, and company terminology varies.</p>
+      </section>
+      <section class="method-section">
+        <p class="section-kicker">04 / HISTORY</p><h2>No invented backfill</h2>
+        <p>Tracking began on <strong>{status.trackingSince}</strong>. Seven- and 30-day changes remain unavailable until enough observed history exists. We do not buy or manufacture older snapshots.</p>
+        <p>The historical publication chart is reconstructed from official Greenhouse <code>first_published</code>, Lever <code>createdAt</code>, and Ashby <code>publishedAt</code> timestamps attached to roles seen by the collector. This provides real publication momentum immediately, but roles removed before tracking began cannot be recovered and are therefore absent.</p>
+        <p>The investor acceleration board compares the latest seven days of official publication timestamps with the preceding seven days. This measures posting velocity, not hires or verified net headcount growth.</p>
+        <p>Verified company-level inventory snapshots are retained separately for five years. These snapshots power net-opening and confirmed-removal metrics from the tracking start onward.</p>
+      </section>
+      <section class="method-section">
+        <p class="section-kicker">05 / COST</p><h2>Free to use and operate</h2>
+        <p>The site is fully static. Collection can run on a public repository’s included GitHub Actions allowance, deployment can use GitHub Pages or Vercel, and the employer APIs are public. There are no paid APIs, proxy subscriptions, accounts, email services, or runtime servers in this version.</p>
+      </section>
+      <section class="method-section">
+        <p class="section-kicker">06 / LIMITS</p><h2>A signal, not a verdict</h2>
+        <ul>
+          <li>A posting does not prove a role will be filled, or that headcount will rise.</li>
+          <li>One opening may represent multiple hires; duplicate or evergreen postings may exist at the source.</li>
+          <li>Job-board coverage may exclude confidential, agency, acquired-company, or internally posted roles.</li>
+          <li>Location and remote status reflect source labels and may be incomplete.</li>
+          <li>Links can expire or redirect after a collection; the source timestamp and health indicators show when the dataset was last verified.</li>
+          <li>This dashboard is informational and is not investment advice.</li>
+        </ul>
+      </section>
+    </div>
+  </div>
+</Layout>

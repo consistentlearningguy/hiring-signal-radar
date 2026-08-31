@@ -1,0 +1,343 @@
+---
+import {
+  JOB_CATEGORIES,
+  JOB_CATEGORY_COLORS,
+  ROLE_LEVELS,
+  type CompanyProfile,
+  type JobCategory,
+  type NormalizedJob
+} from '@/lib/types';
+
+interface Props { jobs: NormalizedJob[]; companies: CompanyProfile[]; today: string; }
+const { jobs, companies, today } = Astro.props;
+const currentJobs = jobs.filter((job) => job.current);
+const profileById = new Map(companies.map((company) => [company.id, company]));
+const employers = [...currentJobs.reduce<Map<string, { id: string; name: string; hasProfile: boolean }>>((entries, job) => {
+  entries.set(job.companyId, { id: job.companyId, name: job.company, hasProfile: profileById.has(job.companyId) });
+  return entries;
+}, new Map()).values()].sort((a, b) => a.name.localeCompare(b.name));
+const employerById = new Map(employers.map((employer) => [employer.id, employer]));
+const sevenDaysAgo = new Date(Date.parse(`${today}T00:00:00Z`) - 7 * 86_400_000).toISOString().slice(0, 10);
+const publicationDay = (job: NormalizedJob) => job.sourcePublishedAt?.slice(0, 10) || job.firstSeen;
+const fresh7 = currentJobs.filter((job) => publicationDay(job) >= sevenDaysAgo).length;
+const remoteRoles = currentJobs.filter((job) => job.remote).length;
+const activeEmployers = new Set(currentJobs.map((job) => job.companyId)).size;
+const categoryCounts = Object.fromEntries(JOB_CATEGORIES.map((category) => [category, 0])) as Record<JobCategory, number>;
+for (const job of currentJobs) categoryCounts[job.category] += 1;
+const categoryMax = Math.max(...Object.values(categoryCounts), 1);
+
+const employerCounts = Object.entries(currentJobs.reduce<Record<string, number>>((counts, job) => {
+  counts[job.companyId] = (counts[job.companyId] ?? 0) + 1;
+  return counts;
+}, {})).sort((a, b) => b[1] - a[1]).slice(0, 8);
+const locationGroups = new Map<string, { label: string; count: number }>();
+for (const job of currentJobs) {
+  const key = job.location.toLocaleLowerCase('en-CA');
+  const group = locationGroups.get(key);
+  if (group) group.count += 1;
+  else locationGroups.set(key, { label: job.location, count: 1 });
+}
+const locationCounts = [...locationGroups.values()].sort((a, b) => b.count - a.count).slice(0, 8).map(({ label, count }) => [label, count] as const);
+const countryCounts = Object.entries(currentJobs.reduce<Record<string, number>>((counts, job) => {
+  if (job.country !== 'Not specified') counts[job.country] = (counts[job.country] ?? 0) + 1;
+  return counts;
+}, {})).sort((a, b) => b[1] - a[1]);
+const payload = JSON.stringify({ companies: employers, base: import.meta.env.BASE_URL, jobsUrl: `${import.meta.env.BASE_URL}data/jobs.json` }).replace(/</g, '\\u003c');
+---
+
+<div class="job-discovery">
+  <div class="job-layout">
+    <aside class="filter-sidebar" aria-label="Job filters">
+      <h2>BUILD YOUR SHORTLIST</h2>
+      <div class="filter-group"><label for="title-filter">Role title or keyword</label><input id="title-filter" type="search" placeholder="e.g. machine learning" autocomplete="off" /></div>
+      <div class="filter-group"><label for="country-filter">Country</label><input id="country-filter" type="search" list="country-options" placeholder="Type ca for Canada" autocomplete="off" /><datalist id="country-options">{countryCounts.map(([country, count]) => <option value={country} label={`${count.toLocaleString()} roles`} />)}</datalist></div>
+      <div class="filter-group"><label for="location-filter">City or region</label><input id="location-filter" type="search" placeholder="e.g. Toronto or Ontario" autocomplete="off" /></div>
+      <div class="filter-group"><label for="company-filter">Employer</label><select id="company-filter"><option value="">All employers</option>{employers.map((company) => <option value={company.id}>{company.name}</option>)}</select></div>
+      <div class="filter-group"><label for="category-filter">Career area</label><select id="category-filter"><option value="">All career areas</option>{JOB_CATEGORIES.map((category) => <option value={category}>{category}</option>)}</select></div>
+      <div class="filter-group"><label for="level-filter">Experience level</label><select id="level-filter"><option value="">All levels</option>{ROLE_LEVELS.map((level) => <option value={level}>{level}</option>)}</select><label class="check-label filter-subcheck"><input id="include-unspecified" type="checkbox" /> Include titles without a stated level</label></div>
+      <div class="filter-group"><label for="remote-filter">Workplace</label><select id="remote-filter"><option value="">All workplaces</option><option value="remote">Remote listed</option><option value="onsite">Not listed as remote</option></select></div>
+      <div class="filter-group"><label for="fresh-filter">Publication freshness</label><select id="fresh-filter"><option value="">Any publication date</option><option value="1">Published in 24 hours</option><option value="7">Published in 7 days</option><option value="30">Published in 30 days</option></select></div>
+      <div class="filter-group saved-filter"><label class="check-label"><input id="watched-filter" type="checkbox" /> Saved employers only</label><p><strong data-watch-count>0</strong> employers saved locally in this browser.</p></div>
+      <button class="filter-reset" type="button" data-reset-filters>RESET ALL FILTERS</button>
+    </aside>
+    <section class="job-results" id="job-results">
+      <div class="job-results-head"><h2><span data-result-count>{currentJobs.length.toLocaleString()}</span> MATCHING ROLES</h2><label>Sort <select data-sort><option value="newest">Newest published</option><option value="company">Employer A–Z</option><option value="title">Role title A–Z</option></select></label></div>
+      <div class="active-filter-note" data-filter-note>Showing every current role across {activeEmployers} employers.</div>
+      <div class="pagination-status" data-pagination-status aria-live="polite"></div>
+      <ol class="job-list" data-job-list aria-busy="true"></ol>
+      <noscript><p class="empty-state">JavaScript is required to load and filter the current role index. Employer profiles and RSS feeds remain available without it.</p></noscript>
+      <button class="action-btn load-more" type="button" data-load-more hidden>SHOW 25 MORE ROLES ↓</button>
+    </section>
+  </div>
+
+  <section class="job-market-snapshot" aria-label="Current job market summary">
+    <div><span>LIVE OPENINGS</span><strong>{currentJobs.length.toLocaleString()}</strong><small>employer-direct listings</small></div>
+    <div><span>PUBLISHED · 7D</span><strong>{fresh7.toLocaleString()}</strong><small>using source dates</small></div>
+    <div><span>REMOTE-LABELED</span><strong>{remoteRoles.toLocaleString()}</strong><small>{Math.round((remoteRoles / Math.max(currentJobs.length, 1)) * 100)}% of openings</small></div>
+    <div><span>ACTIVE EMPLOYERS</span><strong>{activeEmployers}</strong><small>direct boards + discovered employers</small></div>
+  </section>
+
+  <section class="career-map" aria-labelledby="career-map-title">
+    <header><div><p class="section-kicker">CAREER AREA MAP</p><h2 id="career-map-title">Read the opportunity landscape.</h2></div><p>Company job-board labels are translated into practical career paths for discovery. Select any area to return to a filtered role list.</p></header>
+    <div class="career-grid">
+      {JOB_CATEGORIES.map((category) => (
+        <button type="button" data-category-shortcut={category} style={`--category:${JOB_CATEGORY_COLORS[category]}`}>
+          <i></i><span>{category}</span><strong>{categoryCounts[category].toLocaleString()}</strong>
+          <b><em style={`width:${(categoryCounts[category] / categoryMax) * 100}%`}></em></b>
+        </button>
+      ))}
+    </div>
+  </section>
+
+  <section class="opportunity-leads" aria-label="Leading employers and locations">
+    <article><header><span>EMPLOYERS WITH THE MOST OPENINGS</span><small>SELECT TO FILTER</small></header><div>
+      {employerCounts.map(([id, count], index) => <button type="button" data-employer-shortcut={id}><small>{String(index + 1).padStart(2, '0')}</small><span>{employerById.get(id)?.name ?? id}</span><strong>{count.toLocaleString()}</strong></button>)}
+    </div></article>
+    <article><header><span>TOP LISTED LOCATIONS</span><small>SOURCE LABELS</small></header><div>
+      {locationCounts.map(([location, count], index) => <button type="button" data-location-shortcut={location}><small>{String(index + 1).padStart(2, '0')}</small><span>{location}</span><strong>{count.toLocaleString()}</strong></button>)}
+    </div></article>
+  </section>
+</div>
+<script is:inline type="application/json" id="job-board-data" set:html={payload}></script>
+
+<script>
+  import { matchesJobFilters } from '@/lib/job-filter';
+  type Job = { id:string; companyId:string; company:string; title:string; function:string; category:string; level:string; location:string; country:string; remote:boolean; sourceUrl:string; firstSeen:string; sourcePublishedAt?:string; current:boolean };
+  const payload = JSON.parse(document.querySelector<HTMLScriptElement>('#job-board-data')?.textContent || '{}') as { companies: Array<{id:string;name:string;hasProfile:boolean}>; base:string; jobsUrl:string };
+  let storedWatchlist: string[] = [];
+  try { storedWatchlist = JSON.parse(localStorage.getItem('hsr-watchlist') || '[]'); } catch { storedWatchlist = []; }
+  const watched = new Set<string>(storedWatchlist);
+  const list = document.querySelector<HTMLOListElement>('[data-job-list]');
+  const loadMore = document.querySelector<HTMLButtonElement>('[data-load-more]');
+  const count = document.querySelector<HTMLElement>('[data-result-count]');
+  const filterNote = document.querySelector<HTMLElement>('[data-filter-note]');
+  const paginationStatus = document.querySelector<HTMLElement>('[data-pagination-status]');
+  const pageSize = 25;
+  let visible = pageSize;
+  let allJobs: Job[] = [];
+  let filtered: Job[] = [];
+  const millisecondsPerDay = 86_400_000;
+  const currentDay = () => new Date().toISOString().slice(0, 10);
+  const escape = (value: string) => value.replace(/[&<>'"]/g, (character) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' })[character] || character);
+  const dayFor = (job: Job) => job.sourcePublishedAt?.slice(0, 10) || job.firstSeen;
+  const cutoff = (days: number) => new Date(Date.parse(`${currentDay()}T00:00:00Z`) - (days - 1) * millisecondsPerDay).toISOString().slice(0, 10);
+
+  function publicationLabel(job: Job) {
+    const day = dayFor(job);
+    const difference = Math.max(0, Math.floor((Date.parse(`${currentDay()}T00:00:00Z`) - Date.parse(`${day}T00:00:00Z`)) / millisecondsPerDay));
+    if (difference === 0) return 'TODAY';
+    if (difference === 1) return '1 DAY AGO';
+    if (difference < 31) return `${difference} DAYS AGO`;
+    return day;
+  }
+
+  function syncWatchlist() {
+    document.querySelectorAll<HTMLButtonElement>('[data-watch]').forEach((button) => {
+      const active = watched.has(button.dataset.watch || '');
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+      button.textContent = active ? '★' : '☆';
+    });
+    const watchCount = document.querySelector<HTMLElement>('[data-watch-count]');
+    if (watchCount) watchCount.textContent = String(watched.size);
+    localStorage.setItem('hsr-watchlist', JSON.stringify([...watched]));
+  }
+
+  function sortJobs(rows: Job[]) {
+    const sort = document.querySelector<HTMLSelectElement>('[data-sort]')?.value || 'newest';
+    return rows.sort((a, b) => sort === 'company'
+      ? a.company.localeCompare(b.company) || a.title.localeCompare(b.title)
+      : sort === 'title'
+        ? a.title.localeCompare(b.title) || a.company.localeCompare(b.company)
+        : dayFor(b).localeCompare(dayFor(a)) || b.firstSeen.localeCompare(a.firstSeen) || a.company.localeCompare(b.company));
+  }
+
+  function render() {
+    if (!list) return;
+    const rows = filtered.slice(0, visible);
+    const freshCutoff = cutoff(7);
+    list.innerHTML = rows.map((job) => {
+      const employer = payload.companies.find((company) => company.id === job.companyId);
+      const companyMarkup = employer?.hasProfile
+        ? `<a href="${payload.base}companies/${encodeURIComponent(job.companyId)}/"><strong>${escape(job.company)}</strong><small>VIEW EMPLOYER</small></a>`
+        : `<span><strong>${escape(job.company)}</strong><small>EMPLOYER PROFILE</small></span>`;
+      return `<li class="job-card">
+      <div class="company-col">${companyMarkup}</div>
+      <div class="role-col"><h3>${escape(job.title)}${dayFor(job) >= freshCutoff ? '<span class="new-tag">FRESH</span>' : ''}</h3><div class="meta"><span>${escape(job.category)}</span><span>${escape(job.level)}</span><span>${escape(job.location)}</span>${job.remote ? '<span class="remote-tag">REMOTE</span>' : ''}</div></div>
+      <time datetime="${dayFor(job)}"><small>PUBLISHED</small>${publicationLabel(job)}</time>
+      <button class="save-employer" type="button" data-watch="${escape(job.companyId)}" aria-label="Save ${escape(job.company)}" aria-pressed="false">☆</button>
+      <a class="apply-link" href="${escape(job.sourceUrl)}" target="_blank" rel="noreferrer" aria-label="Open original posting for ${escape(job.title)} at ${escape(job.company)}">↗</a>
+    </li>`;
+    }).join('');
+    if (count) count.textContent = filtered.length.toLocaleString();
+    const shown = Math.min(visible, filtered.length);
+    if (paginationStatus) paginationStatus.textContent = filtered.length ? `Showing ${shown.toLocaleString()} of ${filtered.length.toLocaleString()} matching roles` : 'No roles match every selected filter';
+    if (loadMore) {
+      const remaining = Math.max(filtered.length - shown, 0);
+      loadMore.hidden = remaining === 0;
+      loadMore.textContent = `SHOW ${Math.min(pageSize, remaining).toLocaleString()} MORE · ${remaining.toLocaleString()} REMAINING ↓`;
+    }
+    syncWatchlist();
+  }
+
+  function applyFilters() {
+    const title = document.querySelector<HTMLInputElement>('#title-filter')?.value.trim() || '';
+    const country = document.querySelector<HTMLInputElement>('#country-filter')?.value.trim() || '';
+    const location = document.querySelector<HTMLInputElement>('#location-filter')?.value.trim() || '';
+    const companyId = document.querySelector<HTMLSelectElement>('#company-filter')?.value || '';
+    const category = document.querySelector<HTMLSelectElement>('#category-filter')?.value || '';
+    const level = document.querySelector<HTMLSelectElement>('#level-filter')?.value || '';
+    const includeUnspecified = document.querySelector<HTMLInputElement>('#include-unspecified')?.checked;
+    const remote = document.querySelector<HTMLSelectElement>('#remote-filter')?.value || '';
+    const freshDays = Number(document.querySelector<HTMLSelectElement>('#fresh-filter')?.value || 0);
+    const watchedOnly = document.querySelector<HTMLInputElement>('#watched-filter')?.checked;
+    filtered = sortJobs(allJobs.filter((job) =>
+      matchesJobFilters(job as any, {
+        title,
+        country,
+        location,
+        companyId,
+        category,
+        level: includeUnspecified ? undefined : level,
+        remote: remote as '' | 'remote' | 'onsite',
+        publishedSince: freshDays ? cutoff(freshDays) : undefined,
+        watchedOnly,
+        watchedCompanies: watched
+      }) && (!includeUnspecified || !level || job.level === level || job.level === 'Unspecified')
+    ));
+    const labels = [category, level ? `${level}${includeUnspecified ? ' + unspecified' : ''}` : '', companyId ? payload.companies.find((company) => company.id === companyId)?.name : '', country, location, freshDays ? `published in ${freshDays === 1 ? '24 hours' : `${freshDays} days`}` : '', watchedOnly ? 'saved employers' : ''].filter(Boolean);
+    if (filterNote) {
+      const baseNote = labels.length ? `Filtered by ${labels.join(' · ')}.` : `Showing every current role across ${new Set(allJobs.map((job) => job.companyId)).size} employers.`;
+      filterNote.textContent = level && !includeUnspecified && filtered.length < 50 ? `${baseNote} Many source titles omit seniority; include unstated levels to widen this search.` : baseNote;
+    }
+    document.querySelectorAll<HTMLButtonElement>('[data-category-shortcut]').forEach((button) => button.classList.toggle('active', button.dataset.categoryShortcut === category));
+    document.querySelectorAll<HTMLButtonElement>('[data-employer-shortcut]').forEach((button) => button.classList.toggle('active', button.dataset.employerShortcut === companyId));
+    visible = pageSize;
+    render();
+  }
+
+  document.querySelectorAll<HTMLInputElement | HTMLSelectElement>('.filter-sidebar input, .filter-sidebar select, [data-sort]').forEach((control) => control.addEventListener('input', applyFilters));
+  document.querySelectorAll<HTMLButtonElement>('[data-category-shortcut]').forEach((button) => button.addEventListener('click', () => {
+    const select = document.querySelector<HTMLSelectElement>('#category-filter');
+    if (select) select.value = select.value === button.dataset.categoryShortcut ? '' : (button.dataset.categoryShortcut || '');
+    applyFilters(); document.querySelector('#job-results')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }));
+  document.querySelectorAll<HTMLButtonElement>('[data-employer-shortcut]').forEach((button) => button.addEventListener('click', () => {
+    const select = document.querySelector<HTMLSelectElement>('#company-filter');
+    if (select) select.value = select.value === button.dataset.employerShortcut ? '' : (button.dataset.employerShortcut || '');
+    applyFilters(); document.querySelector('#job-results')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }));
+  document.querySelectorAll<HTMLButtonElement>('[data-location-shortcut]').forEach((button) => button.addEventListener('click', () => {
+    const input = document.querySelector<HTMLInputElement>('#location-filter');
+    if (input) input.value = input.value === button.dataset.locationShortcut ? '' : (button.dataset.locationShortcut || '');
+    applyFilters(); document.querySelector('#job-results')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }));
+  list?.addEventListener('click', (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-watch]');
+    if (!button) return;
+    const id = button.dataset.watch || '';
+    if (watched.has(id)) watched.delete(id); else watched.add(id);
+    syncWatchlist();
+    if (document.querySelector<HTMLInputElement>('#watched-filter')?.checked) applyFilters();
+  });
+  document.querySelector('[data-reset-filters]')?.addEventListener('click', () => {
+    document.querySelectorAll<HTMLInputElement>('.filter-sidebar input').forEach((input) => { input.value = ''; input.checked = false; });
+    document.querySelectorAll<HTMLSelectElement>('.filter-sidebar select').forEach((select) => select.value = '');
+    applyFilters();
+  });
+  if (loadMore) loadMore.onclick = () => { visible = Math.min(visible + pageSize, filtered.length); render(); };
+  syncWatchlist();
+  fetch(payload.jobsUrl)
+    .then((response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.json();
+    })
+    .then((jobs: Job[]) => {
+      allJobs = jobs.filter((job) => job.current);
+      list?.setAttribute('aria-busy', 'false');
+      applyFilters();
+    })
+    .catch(() => {
+      list?.setAttribute('aria-busy', 'false');
+      if (paginationStatus) paginationStatus.textContent = 'The role index could not be loaded. Please refresh or use an employer RSS feed.';
+    });
+</script>
+
+<style is:global>
+  .job-market-snapshot { display: grid; grid-template-columns: repeat(4, 1fr); margin-top: 34px; border: 1px solid var(--line-strong); background: rgba(255,255,255,.2); }
+  .job-market-snapshot > div { min-height: 132px; padding: 23px 25px; border-right: 1px solid var(--line); }
+  .job-market-snapshot > div:last-child { border-right: 0; background: var(--ink); color: white; }
+  .job-market-snapshot span, .job-market-snapshot small { display: block; font: 500 9px var(--mono); }
+  .job-market-snapshot span { margin-bottom: 15px; letter-spacing: .09em; }
+  .job-market-snapshot strong { display: block; font: 500 43px/1 var(--display); }
+  .job-market-snapshot small { margin-top: 8px; color: var(--ink-soft); }
+  .job-market-snapshot > div:last-child small { color: rgba(255,255,255,.58); }
+  .career-map { padding: 76px 0 52px; }
+  .career-map > header { display: grid; grid-template-columns: 1.1fr .9fr; gap: 70px; align-items: end; margin-bottom: 28px; }
+  .career-map h2 { max-width: 700px; margin: 0; }
+  .career-map header > p { max-width: 490px; margin: 0 0 5px; color: var(--ink-soft); font-size: 13px; }
+  .career-grid { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--line-strong); border-right: 0; border-bottom: 0; }
+  .career-grid button { position: relative; display: grid; grid-template-columns: 10px 1fr auto; gap: 10px; align-items: center; min-height: 69px; padding: 15px 17px; border: 0; border-right: 1px solid var(--line-strong); border-bottom: 1px solid var(--line-strong); color: var(--ink); background: rgba(255,255,255,.18); cursor: pointer; text-align: left; }
+  .career-grid button:hover, .career-grid button.active { color: white; background: var(--ink); }
+  .career-grid button > i { width: 8px; height: 30px; background: var(--category); }
+  .career-grid button > span { font-size: 11px; font-weight: 600; }
+  .career-grid button > strong { color: var(--category); font: 600 12px var(--mono); }
+  .career-grid button > b { grid-column: 2 / -1; height: 3px; overflow: hidden; background: var(--line); }
+  .career-grid button > b em { display: block; height: 100%; background: var(--category); }
+  .opportunity-leads { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--line-strong); }
+  .opportunity-leads article:first-child { border-right: 1px solid var(--line-strong); }
+  .opportunity-leads article > header { display: flex; justify-content: space-between; padding: 17px 20px; color: white; background: var(--ink); font: 600 9px var(--mono); letter-spacing: .07em; }
+  .opportunity-leads article > header small { opacity: .5; }
+  .opportunity-leads article > div { display: grid; grid-template-columns: 1fr 1fr; }
+  .opportunity-leads button { display: grid; grid-template-columns: 25px 1fr auto; gap: 8px; min-height: 48px; padding: 10px 14px; border: 0; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); color: var(--ink); background: rgba(255,255,255,.16); cursor: pointer; text-align: left; }
+  .opportunity-leads button:nth-child(even) { border-right: 0; }
+  .opportunity-leads button:hover, .opportunity-leads button.active { background: var(--lime); }
+  .opportunity-leads button small { color: var(--orange); font: 500 8px var(--mono); }
+  .opportunity-leads button span { overflow: hidden; font-size: 10px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+  .opportunity-leads button strong { font: 600 9px var(--mono); }
+  .job-discovery .job-layout { padding-top: 76px; }
+  .saved-filter p { margin: 9px 0 0; color: var(--ink-soft); font: 400 9px/1.5 var(--mono); }
+  .filter-subcheck { margin-top: 11px !important; font-size: 8px !important; }
+  .saved-filter p strong { color: var(--blue); }
+  .job-results-head label { display: flex; gap: 8px; align-items: center; color: var(--ink-soft); font: 500 9px var(--mono); text-transform: uppercase; }
+  .job-results-head select { padding: 7px 28px 7px 9px; border: 1px solid var(--line); color: var(--ink); background: transparent; font: 500 9px var(--mono); }
+  .active-filter-note { padding: 11px 2px; border-bottom: 1px solid var(--line); color: var(--ink-soft); font: 400 9px var(--mono); }
+  .pagination-status { padding: 9px 2px; color: var(--blue); font: 500 9px var(--mono); }
+  .job-discovery .job-card { grid-template-columns: 170px minmax(0, 1fr) 105px 38px 45px; gap: 16px; }
+  .job-discovery .job-card .company-col strong { display: block; font: 600 11px var(--body); }
+  .job-discovery .job-card .company-col small { margin-top: 4px; color: var(--blue); font: 500 7px var(--mono); letter-spacing: .06em; }
+  .job-discovery .job-card .meta { display: flex; flex-wrap: wrap; gap: 5px; }
+  .job-discovery .job-card .meta span { padding: 2px 5px; border: 1px solid var(--line); }
+  .job-discovery .job-card .meta .remote-tag { color: var(--blue); border-color: var(--blue); }
+  .job-discovery .job-card .meta .source-tag { color: #8b4c00; border-color: #c18400; background: rgba(193,132,0,.08); }
+  .job-discovery .job-card time { display: block; text-align: right; font-weight: 600; }
+  .job-discovery .job-card time small { display: block; margin-bottom: 4px; color: var(--ink-soft); font-size: 7px; }
+  .save-employer { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--line); background: transparent; cursor: pointer; font-size: 17px; }
+  .save-employer:hover, .save-employer.active { color: var(--orange); border-color: var(--orange); background: white; }
+  .job-discovery .load-more[hidden] { display: none; }
+  @media (max-width: 980px) {
+    .career-grid { grid-template-columns: repeat(2, 1fr); }
+    .job-discovery .job-card { grid-template-columns: 130px minmax(0, 1fr) 90px 38px 45px; }
+  }
+  @media (max-width: 760px) {
+    .job-market-snapshot { grid-template-columns: 1fr 1fr; }
+    .job-market-snapshot > div:nth-child(2) { border-right: 0; }
+    .job-market-snapshot > div:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
+    .career-map > header { grid-template-columns: 1fr; gap: 18px; }
+    .opportunity-leads { grid-template-columns: 1fr; }
+    .opportunity-leads article:first-child { border-right: 0; border-bottom: 1px solid var(--line-strong); }
+    .job-discovery .job-card { grid-template-columns: minmax(0, 1fr) 34px 38px; gap: 10px; }
+    .job-discovery .job-card .company-col { grid-column: 1 / -1; }
+    .job-discovery .job-card .role-col { grid-column: 1; }
+    .job-discovery .job-card time { display: none; }
+  }
+  @media (max-width: 520px) {
+    .career-grid { grid-template-columns: 1fr; }
+    .career-map { padding-top: 55px; }
+    .job-market-snapshot > div { min-height: 112px; padding: 18px 14px; }
+    .job-market-snapshot strong { font-size: 34px; }
+    .opportunity-leads article > div { grid-template-columns: 1fr; }
+    .opportunity-leads button { border-right: 0; }
+    .job-results-head { align-items: start; flex-direction: column; gap: 12px; }
+  }
+</style>

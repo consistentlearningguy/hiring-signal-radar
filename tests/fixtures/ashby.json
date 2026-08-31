@@ -1,0 +1,21 @@
+{
+  "apiVersion": "1",
+  "jobs": [
+    {
+      "id": "ashby-301",
+      "title": "Machine Learning Engineer",
+      "department": "Engineering",
+      "team": "AI Platform",
+      "location": "New York",
+      "secondaryLocations": [
+        { "location": "Toronto" }
+      ],
+      "publishedAt": "2026-08-01T15:30:00.000+00:00",
+      "isListed": true,
+      "isRemote": true,
+      "workplaceType": "Remote",
+      "jobUrl": "https://jobs.ashbyhq.com/example/ashby-301",
+      "applyUrl": "https://jobs.ashbyhq.com/example/ashby-301/application"
+    }
+  ]
+}

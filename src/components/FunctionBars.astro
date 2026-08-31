@@ -1,0 +1,14 @@
+---
+import { ROLE_COLORS, ROLE_FUNCTIONS, type RoleFunction } from '@/lib/types';
+interface Props { counts: Record<RoleFunction, number>; }
+const { counts } = Astro.props;
+const max = Math.max(...Object.values(counts), 1);
+---
+<ul class="function-list">
+  {ROLE_FUNCTIONS.map((role) => (
+    <li>
+      <div class="function-label"><span>{role}</span><strong>{(counts[role] ?? 0).toLocaleString()}</strong></div>
+      <div class="function-bar"><i style={`width:${((counts[role] ?? 0) / max) * 100}%;background:${ROLE_COLORS[role]}`}></i></div>
+    </li>
+  ))}
+</ul>

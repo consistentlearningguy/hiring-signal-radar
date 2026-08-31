@@ -1,0 +1,27 @@
+---
+import type { CollectionStatus } from '@/lib/types';
+interface Props { status: CollectionStatus; compact?: boolean; }
+const { status } = Astro.props;
+const date = status.lastSuccessfulRefresh ? new Date(status.lastSuccessfulRefresh) : null;
+const readable = date ? new Intl.DateTimeFormat('en-CA', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'UTC', timeZoneName: 'short' }).format(date) : 'No successful collection yet';
+---
+<div class="freshness" title={`Tracking since ${status.trackingSince}`} data-freshness data-generated-at={status.generatedAt}>
+  <i class:list={['status-dot', { stale: status.staleSources > 0 }]} aria-hidden="true"></i>
+  <div>
+    <strong data-freshness-label>{status.staleSources > 0 ? `${status.staleSources} source${status.staleSources === 1 ? '' : 's'} stale` : 'All sources reporting'}</strong>
+    <small>LAST REFRESH · {readable}</small>
+  </div>
+</div>
+<script is:inline>
+  (() => {
+    const maxAge = 48 * 60 * 60 * 1000;
+    document.querySelectorAll('[data-freshness]').forEach((element) => {
+      const generatedAt = element.getAttribute('data-generated-at');
+      const age = generatedAt ? Date.now() - Date.parse(generatedAt) : Number.POSITIVE_INFINITY;
+      if (Number.isFinite(age) && age <= maxAge) return;
+      element.querySelector('.status-dot')?.classList.add('stale');
+      const label = element.querySelector('[data-freshness-label]');
+      if (label) label.textContent = 'Dataset refresh overdue';
+    });
+  })();
+</script>

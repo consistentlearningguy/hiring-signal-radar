@@ -1,0 +1,100 @@
+---
+interface Dataset { label: string; data: number[]; color?: string; fill?: boolean; }
+interface Props { labels: string[]; datasets: Dataset[]; rangeControls?: boolean; trackingSince?: string; beginAtZero?: boolean; showLegend?: boolean; }
+const { labels, datasets, rangeControls = false, trackingSince, beginAtZero = false, showLegend = false } = Astro.props;
+const chartData = JSON.stringify({ labels, datasets, beginAtZero, showLegend }).replace(/</g, '\\u003c');
+---
+<div class:list={['chart-history-shell', { 'has-legend': showLegend }]} data-chart-shell>
+  {rangeControls && <div class="chart-range" aria-label="Historical chart range">
+    <span><b>{labels.length}</b> OBSERVED DAY{labels.length === 1 ? '' : 'S'}{trackingSince ? ` · SINCE ${trackingSince}` : ''}</span>
+    <div><button type="button" data-range="30">30D</button><button class="active" type="button" data-range="90">90D</button><button type="button" data-range="365">1Y</button><button type="button" data-range="all">ALL</button></div>
+  </div>}
+  <div class="chart-wrap" data-trend-chart>
+    <canvas aria-label="Hiring activity historical trend chart" role="img"></canvas>
+    {labels.length < 2 && <div class="history-baseline"><strong>BASELINE RECORDED</strong><span>The historical line begins here. A new verified point is added after each successful daily collection.</span></div>}
+    <script is:inline type="application/json" class="chart-data" set:html={chartData}></script>
+  </div>
+</div>
+
+<script>
+  import Chart from 'chart.js/auto';
+
+  document.querySelectorAll<HTMLElement>('[data-trend-chart]').forEach((root) => {
+    if (root.dataset.ready) return;
+    root.dataset.ready = 'true';
+    const canvas = root.querySelector('canvas');
+    const dataElement = root.querySelector<HTMLScriptElement>('.chart-data');
+    if (!canvas || !dataElement) return;
+    const payload = JSON.parse(dataElement.textContent || '{}');
+    const fullData = payload.datasets.map((dataset: { data: number[] }) => [...dataset.data]);
+    const chart = new Chart(canvas, {
+      type: 'line',
+      data: {
+        labels: payload.labels,
+        datasets: payload.datasets.map((dataset: { label: string; data: number[]; color?: string; fill?: boolean }, index: number) => ({
+          label: dataset.label,
+          data: dataset.data,
+          borderColor: dataset.color || (index ? '#f25b2a' : '#0b55d4'),
+          backgroundColor: dataset.fill ? 'rgba(11,85,212,.09)' : 'transparent',
+          fill: Boolean(dataset.fill),
+          borderWidth: 2,
+          pointRadius: payload.labels.length < 3 ? 4 : 0,
+          pointHoverRadius: 5,
+          pointBackgroundColor: dataset.color || '#0b55d4',
+          tension: .28
+        }))
+      },
+      options: {
+        maintainAspectRatio: false,
+        responsive: true,
+        interaction: { intersect: false, mode: 'index' },
+        plugins: {
+          legend: {
+            display: Boolean(payload.showLegend),
+            position: 'bottom',
+            align: 'start',
+            labels: {
+              usePointStyle: true,
+              pointStyle: 'line',
+              boxWidth: 22,
+              boxHeight: 5,
+              padding: 16,
+              color: '#0a1d3d',
+              font: { family: 'IBM Plex Mono', size: 9, weight: 500 }
+            }
+          },
+          tooltip: {
+            backgroundColor: '#0a1d3d',
+            titleFont: { family: 'IBM Plex Mono', size: 10 },
+            bodyFont: { family: 'Archivo', size: 11 },
+            padding: 12,
+            displayColors: true
+          }
+        },
+        scales: {
+          x: { grid: { display: false }, ticks: { color: '#58647a', font: { family: 'IBM Plex Mono', size: 9 }, maxTicksLimit: 7 } },
+          y: { beginAtZero: Boolean(payload.beginAtZero), grid: { color: 'rgba(10,29,61,.1)' }, ticks: { color: '#58647a', precision: 0, font: { family: 'IBM Plex Mono', size: 9 } }, border: { display: false } }
+        }
+      }
+    });
+
+    const shell = root.closest<HTMLElement>('[data-chart-shell]');
+    const setRange = (button: HTMLButtonElement) => {
+      const requested = button.dataset.range || '90';
+      const days = requested === 'all' ? payload.labels.length : Number(requested);
+      const start = Math.max(payload.labels.length - days, 0);
+      chart.data.labels = payload.labels.slice(start);
+      chart.data.datasets.forEach((dataset, index) => { dataset.data = fullData[index].slice(start); });
+      chart.update();
+      shell?.querySelectorAll('[data-range]').forEach((candidate) => candidate.classList.toggle('active', candidate === button));
+    };
+    shell?.querySelectorAll<HTMLButtonElement>('[data-range]').forEach((button) => button.addEventListener('click', () => setRange(button)));
+    const initialRange = shell?.querySelector<HTMLButtonElement>('[data-range].active');
+    if (initialRange) setRange(initialRange);
+  });
+</script>
+
+<style>
+  .chart-history-shell.has-legend .chart-wrap { height: 370px; }
+  @media (max-width: 700px) { .chart-history-shell.has-legend .chart-wrap { height: 340px; } }
+</style>

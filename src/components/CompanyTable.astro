@@ -1,0 +1,135 @@
+---
+import type { CompanyProfile } from '@/lib/types';
+interface Props { companies: CompanyProfile[]; }
+const { companies } = Astro.props;
+const base = import.meta.env.BASE_URL;
+const payload = JSON.stringify(companies).replace(/</g, '\\u003c');
+const signed = (value: number) => `${value > 0 ? '+' : ''}${value}`;
+const dominantFunction = (company: CompanyProfile) => Object.entries(company.functionCounts).sort((a, b) => b[1] - a[1])[0];
+const accelerating = companies.filter((company) => company.publicationDelta7d > 0).length;
+const activePublishers = companies.filter((company) => company.published7d > 0).length;
+const published30 = companies.reduce((total, company) => total + company.published30d, 0);
+---
+<div class="screener-readout" aria-label="Screener publication summary">
+  <p><span>AVAILABLE ON DAY ONE</span><strong>Publication momentum</strong><small>Source timestamps replace immature inventory deltas until enough daily snapshots exist.</small></p>
+  <div><strong>{accelerating}</strong><span>companies accelerating</span><small>latest 7d vs prior 7d</small></div>
+  <div><strong>{activePublishers}</strong><span>active publishers</span><small>at least one role in 7d</small></div>
+  <div><strong>{published30.toLocaleString()}</strong><span>roles published</span><small>latest 30-day window</small></div>
+</div>
+<div class="company-table-wrap">
+  <table class="company-table">
+    <thead><tr><th>Company / symbol</th><th>Open roles</th><th title="Roles carrying a source publication date in the latest seven days">Published · 7d</th><th title="Latest seven-day publication count minus the preceding seven-day count">Vs prior · 7d</th><th title="Roles carrying a source publication date in the latest 30 days">Published · 30d</th><th title="Seven-day publications as a share of current openings">7d intensity</th><th>Primary build</th><th>Compare</th></tr></thead>
+    <tbody>
+      {[...companies].sort((a, b) => b.currentOpenings - a.currentOpenings).map((company) => {
+        const [primaryBuild, primaryCount] = dominantFunction(company) ?? ['Other', 0];
+        const primaryShare = Math.round((Number(primaryCount) / Math.max(company.currentOpenings, 1)) * 100);
+        return <tr data-company-row data-search={`${company.name} ${company.ticker}`.toLowerCase()} data-name={company.name} data-openings={company.currentOpenings} data-acceleration={company.publicationDelta7d} data-published={company.published7d} data-published30={company.published30d} data-intensity={company.publicationIntensity7d}>
+          <td><a class="company-identity" href={`${base}companies/${company.id}/`}>
+            <span class="company-sigil" style={`--company:${company.color}`}>{company.ticker.slice(0, 2)}</span>
+            <span><strong>{company.name}</strong><small>{company.exchange} · {company.ticker}</small></span>
+          </a></td>
+          <td>{company.currentOpenings.toLocaleString()}</td>
+          <td>{company.published7d}</td>
+          <td class:list={[{ delta: company.publicationDelta7d > 0, down: company.publicationDelta7d < 0 }]}>{signed(company.publicationDelta7d)}</td>
+          <td>{company.published30d}</td>
+          <td><span class="intensity-value">{company.publicationIntensity7d.toFixed(1)}%</span></td>
+          <td><span class="build-theme"><strong>{primaryBuild}</strong><small>{primaryShare}% of open roles</small><i style={`--share:${primaryShare}%`}></i></span></td>
+          <td><button class="compare-btn" type="button" data-compare-add={company.id} aria-pressed="false">+ ADD</button></td>
+        </tr>;
+      })}
+    </tbody>
+  </table>
+</div>
+
+<div class="compare-tray" data-compare-tray aria-live="polite">
+  <p><span data-compare-count>0 / 3</span> COMPANIES SELECTED · <b data-compare-names></b></p>
+  <button class="action-btn light" type="button" data-open-compare>COMPARE SIGNALS →</button>
+</div>
+
+<dialog class="compare-dialog" data-compare-dialog>
+  <div class="dialog-head"><div><p class="eyebrow orange">SIDE-BY-SIDE</p><h2>Signal comparison</h2></div><button class="dialog-close" type="button" aria-label="Close comparison">×</button></div>
+  <div class="compare-content" data-compare-content></div>
+</dialog>
+<script is:inline type="application/json" id="company-compare-data" set:html={payload}></script>
+
+<script>
+  const companyData = JSON.parse(document.querySelector<HTMLScriptElement>('#company-compare-data')?.textContent || '[]');
+  const selected = new Set<string>();
+  const tray = document.querySelector<HTMLElement>('[data-compare-tray]');
+  const dialog = document.querySelector<HTMLDialogElement>('[data-compare-dialog]');
+  const count = document.querySelector<HTMLElement>('[data-compare-count]');
+  const names = document.querySelector<HTMLElement>('[data-compare-names]');
+  const escapeHtml = (value: unknown) => String(value).replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[character] ?? character);
+
+  function renderSelection() {
+    document.querySelectorAll<HTMLButtonElement>('[data-compare-add]').forEach((button) => {
+      const active = selected.has(button.dataset.compareAdd || '');
+      button.setAttribute('aria-pressed', String(active));
+      button.textContent = active ? '× REMOVE' : '+ ADD';
+    });
+    tray?.classList.toggle('visible', selected.size > 0);
+    if (count) count.textContent = `${selected.size} / 3`;
+    if (names) names.textContent = companyData.filter((company: { id: string }) => selected.has(company.id)).map((company: { ticker: string }) => company.ticker).join(' · ');
+  }
+
+  document.querySelectorAll<HTMLButtonElement>('[data-compare-add]').forEach((button) => button.addEventListener('click', () => {
+    const id = button.dataset.compareAdd;
+    if (!id) return;
+    if (selected.has(id)) selected.delete(id);
+    else if (selected.size < 3) selected.add(id);
+    else {
+      tray?.animate([{ transform: 'translate(-50%, 0)' }, { transform: 'translate(-48%, 0)' }, { transform: 'translate(-52%, 0)' }, { transform: 'translate(-50%, 0)' }], { duration: 260 });
+    }
+    renderSelection();
+  }));
+
+  function filterRows() {
+    const query = document.querySelector<HTMLInputElement>('[data-company-search]')?.value.toLowerCase().trim() || '';
+    const mode = document.querySelector<HTMLSelectElement>('[data-company-filter]')?.value || 'all';
+    document.querySelectorAll<HTMLElement>('[data-company-row]').forEach((row) => {
+      const matchesQuery = row.dataset.search?.includes(query);
+      const matchesMode = mode === 'all'
+        || (mode === 'accelerating' && Number(row.dataset.acceleration) > 0)
+        || (mode === 'publishing' && Number(row.dataset.published) > 0)
+        || (mode === 'scale' && Number(row.dataset.openings) >= 100);
+      row.hidden = !matchesQuery || !matchesMode;
+    });
+  }
+  document.querySelector<HTMLInputElement>('[data-company-search]')?.addEventListener('input', filterRows);
+  document.querySelector<HTMLSelectElement>('[data-company-filter]')?.addEventListener('change', filterRows);
+
+  document.querySelector<HTMLSelectElement>('[data-company-sort]')?.addEventListener('change', (event) => {
+    const mode = (event.target as HTMLSelectElement).value;
+    const body = document.querySelector<HTMLTableSectionElement>('.company-table tbody');
+    if (!body) return;
+    const rows = [...body.querySelectorAll<HTMLTableRowElement>('[data-company-row]')];
+    rows.sort((a, b) => {
+      if (mode === 'name') return (a.dataset.name || '').localeCompare(b.dataset.name || '');
+      const key = mode === 'acceleration' ? 'acceleration' : mode === 'published' ? 'published' : mode === 'published30' ? 'published30' : mode === 'intensity' ? 'intensity' : 'openings';
+      return Number(b.dataset[key] || 0) - Number(a.dataset[key] || 0);
+    });
+    body.append(...rows);
+  });
+
+  document.querySelector('[data-open-compare]')?.addEventListener('click', () => {
+    const chosen = companyData.filter((company: { id: string }) => selected.has(company.id));
+    const content = document.querySelector<HTMLElement>('[data-compare-content]');
+    if (!content || !chosen.length) return;
+    const maximum = Math.max(...chosen.map((company: { functionCounts: Record<string, number> }) => Math.max(...Object.values(company.functionCounts))), 1);
+    content.innerHTML = `<div class="compare-columns" style="--columns:${chosen.length}">${chosen.map((company: any) => `
+      <article class="compare-card">
+        <span class="ticker">${escapeHtml(company.exchange)} · ${escapeHtml(company.ticker)}</span><h3>${escapeHtml(company.name)}</h3>
+        <div class="compare-number"><span>Current openings</span><strong>${company.currentOpenings.toLocaleString()}</strong></div>
+        <div class="compare-number"><span>Published · 7 days</span><strong>${company.published7d}</strong></div>
+        <div class="compare-number"><span>Vs prior 7 days</span><strong>${company.publicationDelta7d > 0 ? '+' : ''}${company.publicationDelta7d}</strong></div>
+        <div class="compare-number"><span>Published · 30 days</span><strong>${company.published30d}</strong></div>
+        <div class="compare-number"><span>7-day intensity</span><strong>${company.publicationIntensity7d.toFixed(1)}%</strong></div>
+        <div class="mini-bars">${Object.entries(company.functionCounts).map(([role, value]) => `<div><span>${escapeHtml(role)}</span><i style="width:${(Number(value) / maximum) * 100}%"></i><b>${Number(value)}</b></div>`).join('')}</div>
+      </article>`).join('')}</div>`;
+    dialog?.showModal();
+  });
+  document.querySelector('.dialog-close')?.addEventListener('click', () => dialog?.close());
+  dialog?.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
+</script>

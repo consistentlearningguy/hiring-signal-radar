@@ -1,0 +1,103 @@
+---
+import '../styles/global.css';
+import '@fontsource-variable/archivo';
+import '@fontsource-variable/newsreader';
+import '@fontsource-variable/newsreader/standard-italic.css';
+import '@fontsource/ibm-plex-mono/400.css';
+import '@fontsource/ibm-plex-mono/500.css';
+import '@fontsource/ibm-plex-mono/600.css';
+import statusRaw from '../../public/data/status.json';
+import type { CollectionStatus } from '@/lib/types';
+
+interface Props {
+  title?: string;
+  description?: string;
+  rss?: string;
+}
+
+const {
+  title = 'Hiring Signal Radar — Public company hiring activity',
+  description = 'Track published job openings at public technology companies as one transparent business signal.',
+  rss
+} = Astro.props;
+const base = import.meta.env.BASE_URL;
+const pathname = Astro.url.pathname;
+const isJobs = pathname.includes('/jobs');
+const status = statusRaw as CollectionStatus;
+const site = Astro.site ?? Astro.url.origin;
+const canonical = new URL(pathname, site);
+const socialImage = new URL(`${base}social-card.png`, site);
+const repositoryUrl = import.meta.env.PUBLIC_REPOSITORY_URL;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta name="description" content={description} />
+    <meta name="robots" content="index,follow,max-image-preview:large" />
+    <meta name="theme-color" content="#0b2451" />
+    <link rel="canonical" href={canonical} />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Hiring Signal Radar" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={socialImage} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={socialImage} />
+    <link rel="icon" href={`${base}favicon.svg`} type="image/svg+xml" />
+    {rss && <link rel="alternate" type="application/rss+xml" title="Hiring signal feed" href={rss} />}
+    <title>{title}</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <div class="dataset-age-warning" data-dataset-warning data-generated-at={status.generatedAt} role="status" hidden>
+      <strong>DATA REFRESH OVERDUE</strong>
+      <span>The latest verified snapshot is older than 48 hours. Counts and freshness labels may no longer reflect current employer boards.</span>
+      <a href={`${base}status/`}>View data health →</a>
+    </div>
+    <header class="site-header">
+      <a class="wordmark" href={base} aria-label="Hiring Signal Radar home">
+        <span class="radar-mark" aria-hidden="true"><i></i></span>
+        <span>
+          <strong>HIRING SIGNAL</strong>
+          <small>RADAR / PUBLIC BETA</small>
+        </span>
+      </a>
+      <nav class="view-switch" aria-label="Dashboard views">
+        <a class:list={[{ active: !isJobs }]} href={base}><span>01</span> Investor view</a>
+        <a class:list={[{ active: isJobs }]} href={`${base}jobs/`}><span>02</span> Job seeker</a>
+      </nav>
+      <a class="method-link" href={`${base}methodology/`}>How it works <span>↗</span></a>
+    </header>
+    <main id="main">
+      <slot />
+    </main>
+    <footer class="site-footer">
+      <div>
+        <span class="radar-mark small" aria-hidden="true"><i></i></span>
+        <p><strong>HIRING SIGNAL RADAR</strong><br />{isJobs ? 'Source-direct career discovery.' : 'Open data for clearer company research.'}</p>
+      </div>
+      <p class="footer-note">{isJobs ? 'Every listing comes from a public employer-controlled board. Availability, location labels, and hiring outcomes can change at the source.' : 'Hiring is one business signal among many. This dashboard is informational and is not investment advice.'}</p>
+      <nav aria-label="Footer">
+        <a href={`${base}methodology/`}>Methodology</a>
+        <a href={`${base}status/`}>Data status</a>
+        {repositoryUrl && <a href={repositoryUrl} rel="noreferrer">Source code ↗</a>}
+      </nav>
+    </footer>
+    <script is:inline>
+      (() => {
+        const maxAge = 48 * 60 * 60 * 1000;
+        document.querySelectorAll('[data-dataset-warning]').forEach((element) => {
+          const generatedAt = element.getAttribute('data-generated-at');
+          const age = generatedAt ? Date.now() - Date.parse(generatedAt) : Number.POSITIVE_INFINITY;
+          if (!Number.isFinite(age) || age > maxAge) element.removeAttribute('hidden');
+        });
+      })();
+    </script>
+  </body>
+</html>

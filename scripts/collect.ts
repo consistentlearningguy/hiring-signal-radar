@@ -1,0 +1,196 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { companies } from '../src/data/companies';
+import type { CollectionStatus, CollectorState, CompanyConfig, HistoryFile, NormalizedJob, PublicationHistoryFile } from '../src/lib/types';
+import { buildPublicationSeries } from '../src/lib/publication-history';
+import { profileFor } from './lib/metrics';
+import { classifyJobCategory, classifyLevel, inferCountry } from './lib/classification';
+import { deduplicateJobs, normalizeAshby, normalizeGreenhouse, normalizeLever, normalizeSourceUrl, type AshbyJob, type GreenhouseJob, type LeverJob } from './lib/normalize';
+import { emptyCompanyState, emptyState, mergeFailedSnapshot, mergeSuccessfulSnapshot, pruneExpiredJobs, updateHistory } from './lib/state';
+
+const root = process.cwd();
+const statePath = path.join(root, 'data', 'state.json');
+const historyPath = path.join(root, 'data', 'history.json');
+const fixtureMode = process.argv.includes('--fixtures');
+const materializeOnly = process.argv.includes('--materialize');
+const now = process.env.COLLECTOR_NOW ? new Date(process.env.COLLECTOR_NOW) : new Date();
+const timestamp = now.toISOString();
+const day = timestamp.slice(0, 10);
+
+async function readJson<T>(file: string, fallback: T): Promise<T> {
+  try {
+    return JSON.parse(await fs.readFile(file, 'utf8')) as T;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return fallback;
+    throw error;
+  }
+}
+
+async function fetchJson(url: string): Promise<unknown> {
+  const response = await fetch(url, {
+    headers: { 'user-agent': `HiringSignalRadar/1.0 (+${process.env.PUBLIC_REPOSITORY_URL || 'https://github.com'})` },
+    signal: AbortSignal.timeout(20_000)
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status} from ${new URL(url).hostname}`);
+  return response.json();
+}
+
+async function collectCompany(company: CompanyConfig): Promise<NormalizedJob[]> {
+  if (fixtureMode) {
+    const fixture = path.join(root, 'tests', 'fixtures', `${company.provider}.json`);
+    const payload = await readJson<unknown>(fixture, company.provider === 'lever' ? [] : { jobs: [] });
+    return normalizePayload(company, payload);
+  }
+  const url = company.provider === 'greenhouse'
+    ? `https://boards-api.greenhouse.io/v1/boards/${company.boardToken}/jobs`
+    : company.provider === 'lever'
+      ? `https://api.lever.co/v0/postings/${company.boardToken}?mode=json`
+      : `https://api.ashbyhq.com/posting-api/job-board/${company.boardToken}`;
+  return normalizePayload(company, await fetchJson(url));
+}
+
+function normalizePayload(company: CompanyConfig, payload: unknown): NormalizedJob[] {
+  if (company.provider === 'greenhouse') {
+    const jobs = (payload as { jobs?: GreenhouseJob[] }).jobs;
+    if (!Array.isArray(jobs)) throw new Error('Invalid Greenhouse response');
+    return deduplicateJobs(jobs.map((job) => normalizeGreenhouse(job, company, day)));
+  }
+  if (company.provider === 'ashby') {
+    const jobs = (payload as { jobs?: AshbyJob[] }).jobs;
+    if (!Array.isArray(jobs)) throw new Error('Invalid Ashby response');
+    return deduplicateJobs(jobs.filter((job) => job.isListed !== false).map((job) => normalizeAshby(job, company, day)));
+  }
+  if (!Array.isArray(payload)) throw new Error('Invalid Lever response');
+  return deduplicateJobs((payload as LeverJob[]).map((job) => normalizeLever(job, company, day)));
+}
+
+function xml(value: string): string {
+  return value.replace(/[<>&'\"]/g, (character) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' })[character]!);
+}
+
+function rssFor(company: CompanyConfig, jobs: NormalizedJob[], siteUrl: string, buildDate: Date): string {
+  const items = jobs.filter((job) => job.current).sort((a, b) => b.firstSeen.localeCompare(a.firstSeen)).slice(0, 50).map((job) => `
+    <item>
+      <title>${xml(job.title)} — ${xml(job.location)}</title>
+      <link>${xml(job.sourceUrl)}</link>
+      <guid isPermaLink="false">${xml(job.id)}:${job.firstSeen}</guid>
+      <pubDate>${new Date(`${job.firstSeen}T12:00:00Z`).toUTCString()}</pubDate>
+      <description>${xml(`${job.function} role at ${company.name}. First seen by Hiring Signal Radar on ${job.firstSeen}.`)}</description>
+    </item>`).join('');
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
+  <title>${xml(company.name)} hiring signals</title>
+  <link>${xml(`${siteUrl}/companies/${company.id}/`)}</link>
+  <description>Newly observed public job postings from ${xml(company.name)}.</description>
+  <lastBuildDate>${buildDate.toUTCString()}</lastBuildDate>${items}
+</channel></rss>`;
+}
+
+async function writeJson(file: string, value: unknown): Promise<void> {
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, `${JSON.stringify(value)}\n`);
+}
+
+async function clearGeneratedFiles(directory: string, extension: string): Promise<void> {
+  await fs.mkdir(directory, { recursive: true });
+  const entries = await fs.readdir(directory, { withFileTypes: true });
+  await Promise.all(entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith(extension))
+    .map((entry) => fs.unlink(path.join(directory, entry.name))));
+}
+
+async function main(): Promise<void> {
+  const state = await readJson<CollectorState>(statePath, emptyState(day));
+  for (const companyState of Object.values(state.companies)) {
+    for (const job of Object.values(companyState.jobs)) {
+      job.level ??= classifyLevel(job.title);
+      job.category ??= classifyJobCategory(job.title);
+      job.country ??= inferCountry(job.location);
+      job.sourceUrl = normalizeSourceUrl(job.sourceUrl);
+    }
+  }
+  const history = await readJson<HistoryFile>(historyPath, { trackingSince: state.trackingSince, companies: {} });
+  const results: PromiseSettledResult<{ company: CompanyConfig; jobs: NormalizedJob[] }>[] = [];
+  if (!materializeOnly) {
+    state.lastRun = timestamp;
+    const batchSize = 8;
+    for (let index = 0; index < companies.length; index += batchSize) {
+      const batch = companies.slice(index, index + batchSize);
+      results.push(...await Promise.allSettled(batch.map(async (company) => ({ company, jobs: await collectCompany(company) }))));
+    }
+    results.forEach((result, index) => {
+      const company = companies[index];
+      if (result.status === 'fulfilled') {
+        state.companies[company.id] = mergeSuccessfulSnapshot(state.companies[company.id], result.value.jobs, timestamp, day);
+      } else {
+        state.companies[company.id] = mergeFailedSnapshot(state.companies[company.id], timestamp, result.reason);
+      }
+      updateHistory(history, company, state.companies[company.id] ?? emptyCompanyState(), day);
+    });
+    const pruned = pruneExpiredJobs(state, day);
+    if (pruned) console.log(`Pruned ${pruned} job records outside the five-year retention window.`);
+    await writeJson(statePath, state);
+    await writeJson(historyPath, history);
+  }
+
+  const generatedAt = state.lastRun || Object.values(state.companies).map((entry) => entry.lastSuccess).filter((value): value is string => Boolean(value)).sort().at(-1) || timestamp;
+  const generatedDay = generatedAt.slice(0, 10);
+  const allJobs = companies.flatMap((company) => Object.values(state.companies[company.id]?.jobs ?? {}));
+  const status: CollectionStatus = {
+    trackingSince: state.trackingSince,
+    generatedAt,
+    lastSuccessfulRefresh: Object.values(state.companies).map((entry) => entry.lastSuccess).filter(Boolean).sort().at(-1),
+    totalSources: companies.length,
+    healthySources: companies.filter((company) => !state.companies[company.id]?.stale).length,
+    staleSources: companies.filter((company) => state.companies[company.id]?.stale).length,
+    companies: Object.fromEntries(companies.map((company) => {
+      const entry = state.companies[company.id] ?? emptyCompanyState();
+      return [company.id, { stale: entry.stale, lastAttempt: entry.lastAttempt, lastSuccess: entry.lastSuccess, consecutiveFailures: entry.consecutiveFailures, error: entry.error }];
+    }))
+  };
+
+  const profiles = companies.map((company) => profileFor(company, state.companies[company.id] ?? emptyCompanyState(), history.companies[company.id] ?? [], generatedDay));
+  const publicJobs = allJobs.map(({ missingCount: _missingCount, ...job }) => job).sort((a, b) => b.firstSeen.localeCompare(a.firstSeen) || a.company.localeCompare(b.company));
+  const publicationHistory: PublicationHistoryFile = {
+    generatedAt,
+    basis: 'official-publication-timestamps',
+    limitation: 'Backfilled from publication timestamps on roles observed by the collector. Roles removed before tracking began are not represented.',
+    companies: Object.fromEntries(companies.map((company) => [company.id, buildPublicationSeries(allJobs.filter((job) => job.companyId === company.id), generatedDay)]))
+  };
+
+  await writeJson(path.join(root, 'public', 'data', 'status.json'), status);
+  await writeJson(path.join(root, 'public', 'data', 'companies.json'), profiles);
+  await writeJson(path.join(root, 'public', 'data', 'jobs.json'), publicJobs);
+  await writeJson(path.join(root, 'public', 'data', 'publication-history.json'), publicationHistory);
+
+  const companyDataDirectory = path.join(root, 'public', 'data', 'companies');
+  const rssDirectory = path.join(root, 'public', 'rss');
+  await Promise.all([
+    clearGeneratedFiles(companyDataDirectory, '.json'),
+    clearGeneratedFiles(rssDirectory, '.xml')
+  ]);
+
+  const siteUrl = (process.env.PUBLIC_SITE_URL || process.env.SITE_URL || 'http://localhost:4321').replace(/\/$/, '');
+  const buildDate = new Date(generatedAt);
+  await Promise.all(companies.map(async (company) => {
+    const companyJobs = allJobs.filter((job) => job.companyId === company.id);
+    await writeJson(path.join(companyDataDirectory, `${company.id}.json`), {
+      profile: profiles.find((profile) => profile.id === company.id),
+      status: status.companies[company.id],
+      history: history.companies[company.id] ?? [],
+      publicationHistory: publicationHistory.companies[company.id] ?? [],
+      jobs: companyJobs.map(({ missingCount: _missingCount, ...job }) => job)
+    });
+    await fs.writeFile(path.join(rssDirectory, `${company.id}.xml`), rssFor(company, companyJobs, siteUrl, buildDate));
+  }));
+
+  if (!materializeOnly) {
+    for (const [index, result] of results.entries()) {
+      const company = companies[index];
+      console.log(`${result.status === 'fulfilled' ? '✓' : '×'} ${company.name}: ${result.status === 'fulfilled' ? `${result.value.jobs.length} roles` : String(result.reason)}`);
+    }
+  }
+  console.log(`Generated ${publicJobs.filter((job) => job.current).length} current roles across ${companies.length} employer-direct boards.`);
+}
+
+await main();

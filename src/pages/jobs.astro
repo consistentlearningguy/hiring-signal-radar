@@ -1,0 +1,33 @@
+---
+import Layout from '@/layouts/Layout.astro';
+import JobBoard from '@/components/JobBoard.astro';
+import type { CollectionStatus, CompanyProfile, NormalizedJob } from '@/lib/types';
+import companiesRaw from '../../public/data/companies.json';
+import jobsRaw from '../../public/data/jobs.json';
+import statusRaw from '../../public/data/status.json';
+
+const profiles = companiesRaw as unknown as CompanyProfile[];
+const jobs = jobsRaw as NormalizedJob[];
+const status = statusRaw as CollectionStatus;
+const current = jobs.filter((job) => job.current);
+const today = new Date().toISOString().slice(0, 10);
+---
+
+<Layout title="Fresh jobs — Hiring Signal Radar" description={`Explore newly published roles at ${profiles.length} employers with practical career filters and direct links to the original postings.`}>
+  <div class="page-shell">
+    <section class="jobs-hero">
+      <div class="reveal">
+        <p class="eyebrow orange">EMPLOYER-DIRECT JOB DISCOVERY</p>
+        <h1>Find the work<br />while it’s <em>fresh.</em></h1>
+        <p class="intro">Explore {current.length.toLocaleString()} current roles from official employer boards. Filter by career area, experience, freshness, location, workplace, and employer—then follow the original application link.</p>
+      </div>
+      <aside class="jobs-note reveal d2"><span>BUILT FOR DECISIONS</span><p>Source publication dates, career-path breakdowns, employer signals, and direct applications. No ticker knowledge required.</p></aside>
+    </section>
+    {status.staleSources > 0 && <div class="stale-banner"><i class="status-dot stale"></i> {status.staleSources} source{status.staleSources === 1 ? ' is' : 's are'} currently stale. Its last valid snapshot remains visible.</div>}
+    <JobBoard jobs={jobs} companies={profiles} today={today} />
+  </div>
+</Layout>
+
+<style>
+  .stale-banner { display: flex; align-items: center; gap: 12px; margin-top: 24px; padding: 14px 16px; border: 1px solid #c83f31; color: #8c2a22; font: 500 10px var(--mono); }
+</style>

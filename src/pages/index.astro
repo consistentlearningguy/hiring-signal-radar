@@ -1,0 +1,248 @@
+---
+import Layout from '@/layouts/Layout.astro';
+import Metric from '@/components/Metric.astro';
+import Freshness from '@/components/Freshness.astro';
+import TrendChart from '@/components/TrendChart.astro';
+import FunctionBars from '@/components/FunctionBars.astro';
+import CompanyTable from '@/components/CompanyTable.astro';
+import { buildPublicationSeries } from '@/lib/publication-history';
+import { ROLE_COLORS, ROLE_FUNCTIONS, type CollectionStatus, type CompanyProfile, type NormalizedJob, type RoleFunction } from '@/lib/types';
+import companiesRaw from '../../public/data/companies.json';
+import statusRaw from '../../public/data/status.json';
+import jobsRaw from '../../public/data/jobs.json';
+
+const allProfiles = companiesRaw as unknown as CompanyProfile[];
+const profiles = allProfiles.filter((profile) => !profile.jobSeekerOnly);
+const status = statusRaw as CollectionStatus;
+const investorCompanyIds = new Set(profiles.map((profile) => profile.id));
+const jobs = (jobsRaw as NormalizedJob[]).filter((job) => investorCompanyIds.has(job.companyId));
+const currentJobs = jobs.filter((job) => job.current);
+const today = status.generatedAt.slice(0, 10);
+const published7 = profiles.reduce((total, profile) => total + profile.published7d, 0);
+const functionCounts = Object.fromEntries(ROLE_FUNCTIONS.map((role) => [role, 0])) as Record<RoleFunction, number>;
+for (const job of currentJobs) functionCounts[job.function] += 1;
+const countryCounts = Object.entries(currentJobs.reduce<Record<string, number>>((counts, job) => {
+  if (job.country === 'Not specified') return counts;
+  counts[job.country] = (counts[job.country] ?? 0) + 1;
+  return counts;
+}, {})).sort((a, b) => b[1] - a[1]).slice(0, 8);
+
+const publicationSeries = buildPublicationSeries(jobs, today);
+const dateLabels = publicationSeries.map((point) => new Intl.DateTimeFormat('en-CA', { month: 'short', day: 'numeric', year: '2-digit', timeZone: 'UTC' }).format(new Date(`${point.date}T00:00:00Z`)));
+const functionPublicationDatasets = ROLE_FUNCTIONS.map((role) => {
+  const roleSeries = buildPublicationSeries(jobs.filter((job) => job.function === role), today);
+  const rollingByDate = new Map(roleSeries.map((point) => [point.date, point.rolling7]));
+  return { label: role, data: publicationSeries.map((point) => rollingByDate.get(point.date) ?? 0), color: ROLE_COLORS[role] };
+});
+const newJobs = [...currentJobs].sort((a, b) => (b.sourcePublishedAt ?? b.firstSeen).localeCompare(a.sourcePublishedAt ?? a.firstSeen)).slice(0, 6);
+const removedJobs = jobs.filter((job) => !job.current && job.removedAt).sort((a, b) => (b.removedAt ?? '').localeCompare(a.removedAt ?? '')).slice(0, 6);
+const momentumLeaders = [...profiles]
+  .sort((a, b) => b.publicationDelta7d - a.publicationDelta7d || b.published7d - a.published7d)
+  .slice(0, 10);
+const momentumMax = Math.max(...momentumLeaders.map((profile) => profile.published7d), 1);
+const dominantFunction = (profile: CompanyProfile) => Object.entries(profile.functionCounts)
+  .sort((a, b) => b[1] - a[1])[0] as [RoleFunction, number];
+const functionBreadth = (profile: CompanyProfile) => Object.values(profile.functionCounts)
+  .filter((count) => count >= Math.max(2, Math.ceil(profile.currentOpenings * 0.03))).length;
+const accelerationLeader = [...profiles].sort((a, b) => b.publicationDelta7d - a.publicationDelta7d || b.published7d - a.published7d)[0];
+const scaleLeader = [...profiles].sort((a, b) => b.currentOpenings - a.currentOpenings)[0];
+const breadthLeader = [...profiles].filter((profile) => profile.currentOpenings >= 25)
+  .sort((a, b) => functionBreadth(b) - functionBreadth(a) || b.published7d - a.published7d)[0];
+const acceleratingCompanies = profiles.filter((profile) => profile.publicationDelta7d > 0).length;
+const thirtyDayLeaders = [...profiles].sort((a, b) => b.published30d - a.published30d || b.currentOpenings - a.currentOpenings).slice(0, 6);
+const base = import.meta.env.BASE_URL;
+---
+
+<Layout>
+  <div class="page-shell">
+    <section class="hero">
+      <div class="hero-copy reveal">
+        <p class="eyebrow">PUBLIC COMPANY INTELLIGENCE · DAILY</p>
+        <h1>See where<br />companies are <em>building.</em></h1>
+        <p class="hero-deck"><strong>Published jobs reveal priorities in motion.</strong> Track hiring direction across {profiles.length} public technology companies—one transparent business signal, observed from the source.</p>
+      </div>
+      <div class="hero-radar reveal d2" aria-label={`${currentJobs.length.toLocaleString()} current openings tracked`}>
+        <i class="radar-origin"></i><i class="ping one"></i><i class="ping two"></i><i class="ping three"></i>
+        <div class="radar-readout"><span>LIVE SIGNAL UNIVERSE</span><strong>{currentJobs.length.toLocaleString()}</strong><p>OPEN ROLES / {profiles.length} PUBLIC COMPANIES</p></div>
+      </div>
+    </section>
+
+    <section class="data-strip reveal d3" aria-label="Key hiring metrics">
+      <Metric label="Current openings" value={currentJobs.length.toLocaleString()} suffix="roles" />
+      <Metric label="Published · 7d" value={published7.toLocaleString()} suffix="roles" title="Based on official source publication timestamps" />
+      <Metric label="Accelerating · 7d" value={acceleratingCompanies.toLocaleString()} suffix="companies" title="Companies publishing more roles than in the preceding seven days" />
+      <Metric label="Companies tracked" value={profiles.length} suffix="daily" />
+      <Freshness status={status} />
+    </section>
+
+    <section class="decision-brief" aria-labelledby="brief-title">
+      <header><div><p class="section-kicker">THIS WEEK'S READ</p><h2 id="brief-title">Signals worth opening.</h2></div><p>Evidence-led shortcuts into pace, scale, and organizational breadth. These describe published hiring footprints—not revenue or confirmed headcount growth.</p></header>
+      <div class="brief-grid">
+        <a class="brief-card acceleration" href={`${base}companies/${accelerationLeader.id}/`}>
+          <span>FASTEST PUBLICATION ACCELERATION</span>
+          <strong>{accelerationLeader.name}</strong>
+          <b>+{accelerationLeader.publicationDelta7d}</b>
+          <p>{accelerationLeader.published7d} roles published in seven days versus {Math.max(0, accelerationLeader.published7d - accelerationLeader.publicationDelta7d)} in the prior period.</p>
+          <small>{dominantFunction(accelerationLeader)[0]} LEADS · {accelerationLeader.currentOpenings.toLocaleString()} OPEN →</small>
+        </a>
+        <a class="brief-card scale" href={`${base}companies/${scaleLeader.id}/`}>
+          <span>LARGEST ACTIVE HIRING FOOTPRINT</span>
+          <strong>{scaleLeader.name}</strong>
+          <b>{scaleLeader.currentOpenings.toLocaleString()}</b>
+          <p>Current published roles, with {scaleLeader.published7d} added by source date during the latest seven-day window.</p>
+          <small>{dominantFunction(scaleLeader)[0]} · {Math.round((dominantFunction(scaleLeader)[1] / Math.max(scaleLeader.currentOpenings, 1)) * 100)}% OF OPENINGS →</small>
+        </a>
+        <a class="brief-card breadth" href={`${base}companies/${breadthLeader.id}/`}>
+          <span>BROADEST ORGANIZATIONAL BUILD</span>
+          <strong>{breadthLeader.name}</strong>
+          <b>{functionBreadth(breadthLeader)}/{ROLE_FUNCTIONS.length}</b>
+          <p>Investment themes each representing at least 3% of its {breadthLeader.currentOpenings.toLocaleString()} current openings.</p>
+          <small>{dominantFunction(breadthLeader)[0]} IS LARGEST · OPEN PROFILE →</small>
+        </a>
+        <article class="brief-card breadth market-read">
+          <span>MARKET BREADTH</span>
+          <strong>Positive velocity</strong>
+          <b>{acceleratingCompanies}/{profiles.length}</b>
+          <p>Tracked companies published more roles this week than in the preceding seven days.</p>
+          <small>COMPARE PACE WITH SCALE BEFORE DRAWING A CONCLUSION</small>
+        </article>
+      </div>
+    </section>
+
+    <section class="dashboard-section" aria-labelledby="pulse-title">
+      <div class="section-heading"><div><p class="section-kicker">01 / HISTORICAL MARKET PULSE</p><h2 id="pulse-title">The aggregate signal</h2></div><p>Historical publication momentum from official source timestamps. Daily inventory snapshots separately power net-change metrics from the tracking start.</p></div>
+      <div class="signal-grid">
+        <article class="chart-panel">
+          <div class="panel-head"><div><h3>INVESTMENT THEMES OVER TIME</h3><p>TRAILING 7-DAY PUBLICATIONS · OFFICIAL TIMESTAMPS</p></div><span class="section-kicker">{ROLE_FUNCTIONS.length} THEME SERIES</span></div>
+          <TrendChart labels={dateLabels} datasets={functionPublicationDatasets} rangeControls trackingSince={publicationSeries[0]?.date ?? status.trackingSince} beginAtZero showLegend />
+          <p class="history-provenance"><strong>HISTORICAL BASIS</strong> Reconstructed from official <code>first_published</code>, <code>createdAt</code>, and <code>publishedAt</code> timestamps. Roles removed before this tracker first observed them are not present.</p>
+        </article>
+        <article class="function-panel">
+          <div class="panel-head"><div><h3>INVESTMENT THEME MIX</h3><p>CURRENT OPENINGS · RULE-BASED</p></div><span class="section-kicker">{currentJobs.length.toLocaleString()} TOTAL</span></div>
+          <FunctionBars counts={functionCounts} />
+        </article>
+      </div>
+      <div class="location-tape" aria-label="Top hiring countries inferred from source locations">
+        <span class="tape-label">TOP HIRING COUNTRIES</span>
+        {countryCounts.map(([country, count], index) => <div><small>{String(index + 1).padStart(2, '0')}</small><strong>{country}</strong><span>{count.toLocaleString()}</span></div>)}
+      </div>
+    </section>
+
+    <section class="dashboard-section" aria-labelledby="momentum-title">
+      <div class="section-heading"><div><p class="section-kicker">02 / MOMENTUM BOARD</p><h2 id="momentum-title">Which hiring footprints are expanding?</h2></div><p>Ranked by official publication acceleration, with current scale and dominant investment area shown alongside it.</p></div>
+      <div class="momentum-board">
+        <aside>
+          <p class="eyebrow orange">PUBLICATION ACCELERATION</p>
+          <strong>Signal velocity</strong>
+          <p>Compares roles published in the latest seven days with the prior seven. Inventory change remains separate and begins at the tracking date.</p>
+          <small>POSTINGS ≠ HIRES<br />DIRECTIONAL SIGNAL ONLY</small>
+        </aside>
+        <ol class="momentum-list">
+          {momentumLeaders.map((company, index) => {
+            const value = company.published7d;
+            const display = `${company.publicationDelta7d > 0 ? '+' : ''}${company.publicationDelta7d}`;
+            return <li>
+              <span class="rank">{String(index + 1).padStart(2, '0')}</span>
+              <a href={`${base}companies/${company.id}/`}><i style={`--company:${company.color}`}></i><span><strong>{company.name}</strong><small>{company.ticker} · {dominantFunction(company)[0]}</small></span></a>
+              <div class="momentum-bar"><span>{company.currentOpenings.toLocaleString()} OPEN</span><i style={`width:${Math.max((value / momentumMax) * 100, 1.5)}%`}></i></div>
+              <b class:list={{ down: company.publicationDelta7d < 0 }}>{display}<small>{company.published7d} PUBLISHED</small></b>
+            </li>;
+          })}
+        </ol>
+      </div>
+    </section>
+
+    <section class="dashboard-section" aria-labelledby="companies-title">
+      <div class="section-heading"><div><p class="section-kicker">03 / COMPANY SCREENER</p><h2 id="companies-title">Read every signal</h2></div><div class="company-tools"><label class="search-field"><span class="sr-only">Search companies</span><input data-company-search type="search" placeholder="Search name or ticker" /></label><label class="company-sort"><span>SHOW</span><select data-company-filter><option value="all">All tracked companies</option><option value="accelerating">Accelerating now</option><option value="publishing">Published in 7d</option><option value="scale">100+ open roles</option></select></label><label class="company-sort"><span>SORT</span><select data-company-sort><option value="openings">Most open roles</option><option value="acceleration">Fastest acceleration</option><option value="published">Most published · 7d</option><option value="published30">Most published · 30d</option><option value="intensity">Highest 7d intensity</option><option value="name">Company A–Z</option></select></label></div></div>
+      <CompanyTable companies={profiles} />
+    </section>
+
+    <section class="dashboard-section" aria-labelledby="movement-title">
+      <div class="section-heading"><div><p class="section-kicker">04 / ROLE MOVEMENT</p><h2 id="movement-title">What changed?</h2></div><p>Fresh roles appear immediately. Until enough observed removals accumulate, the second panel shows the strongest 30-day publishing footprints.</p></div>
+      <div class="activity-grid">
+        <article class="activity-column">
+          <header><h3>NEWLY OPENED</h3><span>LATEST OBSERVATIONS</span></header>
+          <ol class="activity-list">
+            {newJobs.map((job) => <li><span class="ticker">{job.ticker}</span><div><a href={job.sourceUrl} target="_blank" rel="noreferrer"><strong>{job.title}</strong></a><small>{job.location} · {job.function}</small></div><time>{job.sourcePublishedAt?.slice(0, 10) ?? job.firstSeen}</time></li>)}
+          </ol>
+        </article>
+        <article class:list={['activity-column', { removed: removedJobs.length > 0, publishers: removedJobs.length === 0 }]}>
+          <header><h3>{removedJobs.length ? 'RECENTLY REMOVED' : '30-DAY PUBLICATION LEADERS'}</h3><span>{removedJobs.length ? 'TWO-MISS CONFIRMED' : 'SOURCE-DATED ROLES'}</span></header>
+          <ol class="activity-list">
+            {removedJobs.length ? removedJobs.map((job) => <li><span class="ticker">{job.ticker}</span><div><strong>{job.title}</strong><small>{job.location} · {job.function}</small></div><time>{job.removedAt}</time></li>) : thirtyDayLeaders.map((company) => <li><span class="ticker">{company.ticker}</span><div><a href={`${base}companies/${company.id}/`}><strong>{company.name}</strong></a><small>{dominantFunction(company)[0]} · {company.currentOpenings.toLocaleString()} current openings</small></div><time>{company.published30d} / 30D</time></li>)}
+          </ol>
+        </article>
+      </div>
+    </section>
+
+    <section class="dashboard-section callout-section">
+      <div class="jobs-note"><span>LOOKING FOR YOUR NEXT ROLE?</span><p>Explore a broader employer network by career path, freshness, level, and location.</p><a class="text-btn" href={`${base}jobs/`}>OPEN JOB SEEKER VIEW →</a></div>
+    </section>
+  </div>
+</Layout>
+
+<style>
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
+  .callout-section { display: grid; place-items: center; }
+  .callout-section .jobs-note { max-width: 620px; justify-self: center; padding: 40px; }
+  .callout-section .jobs-note p { font-size: 34px; }
+  .callout-section .text-btn { display: inline-block; margin-top: 20px; }
+  .decision-brief { padding: 72px 0 0; }
+  .decision-brief > header { display: grid; grid-template-columns: 1fr minmax(280px, 430px); gap: 30px; align-items: end; margin-bottom: 24px; }
+  .decision-brief h2 { margin: 3px 0 0; font: 500 clamp(38px, 5vw, 64px)/.92 var(--display); letter-spacing: -.035em; }
+  .decision-brief > header > p { color: var(--ink-soft); font-size: 11px; }
+  .brief-grid { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid var(--line-strong); }
+  .brief-card { position: relative; min-height: 270px; display: flex; flex-direction: column; padding: 23px; color: var(--ink); border-right: 1px solid var(--line-strong); overflow: hidden; transition: background .2s ease, transform .2s ease; }
+  .brief-card:last-child { border-right: 0; }
+  a.brief-card:hover { z-index: 1; background: #fffdf6; transform: translateY(-4px); box-shadow: 0 8px 0 rgba(11,36,81,.12); }
+  .brief-card::before { content: ''; position: absolute; inset: 0 0 auto; height: 6px; background: var(--blue); }
+  .brief-card.acceleration::before { background: var(--lime); }
+  .brief-card.scale::before { background: var(--orange); }
+  .brief-card.breadth::before { background: #7a4ce0; }
+  .brief-card > span { max-width: 180px; min-height: 30px; color: var(--ink-soft); font: 600 8px/1.45 var(--mono); letter-spacing: .08em; }
+  .brief-card > strong { display: block; margin-top: 22px; font-size: 14px; }
+  .brief-card > b { margin: 5px 0 16px; font: 500 52px/.9 var(--display); letter-spacing: -.04em; }
+  .brief-card > p { color: var(--ink-soft); font-size: 10px; }
+  .brief-card > small { margin-top: auto; padding-top: 24px; color: var(--blue); font: 600 7px/1.5 var(--mono); letter-spacing: .06em; }
+  .brief-card.market-read { color: white; background: var(--ink); }
+  .brief-card.market-read > span, .brief-card.market-read > p { color: rgba(255,255,255,.6); }
+  .brief-card.market-read > small { color: var(--lime); }
+  .company-tools { display: flex; gap: 10px; align-items: stretch; }
+  .company-sort { display: flex; align-items: center; gap: 8px; padding-left: 12px; border: 1px solid var(--line-strong); }
+  .company-sort span { font: 600 7px var(--mono); letter-spacing: .08em; }
+  .company-sort select { min-width: 185px; border: 0; background: transparent; font: 500 9px var(--mono); }
+  .momentum-board { display: grid; grid-template-columns: 285px minmax(0, 1fr); border: 1px solid var(--line-strong); background: var(--ink); color: white; }
+  .momentum-board > aside { padding: 30px; border-right: 1px solid rgba(255,255,255,.22); background: repeating-linear-gradient(135deg, transparent 0 16px, rgba(255,255,255,.025) 17px 18px); }
+  .momentum-board > aside > strong { display: block; margin: 44px 0 12px; font: 500 44px/.9 var(--display); }
+  .momentum-board > aside > p:not(.eyebrow) { color: rgba(255,255,255,.66); font-size: 11px; }
+  .momentum-board > aside > small { display: block; margin-top: 60px; color: var(--lime); font: 500 8px/1.8 var(--mono); letter-spacing: .1em; }
+  .momentum-list { list-style: none; margin: 0; padding: 0; counter-reset: momentum; }
+  .momentum-list li { min-height: 67px; display: grid; grid-template-columns: 42px minmax(160px, .8fr) minmax(160px, 1.3fr) 78px; align-items: center; gap: 15px; padding: 8px 22px; border-bottom: 1px solid rgba(255,255,255,.14); }
+  .momentum-list li:last-child { border-bottom: 0; }
+  .momentum-list li:hover { background: rgba(255,255,255,.055); }
+  .momentum-list .rank { color: rgba(255,255,255,.36); font: 500 9px var(--mono); }
+  .momentum-list a { display: flex; align-items: center; gap: 10px; }
+  .momentum-list a > i { width: 8px; height: 28px; background: var(--company); }
+  .momentum-list a strong { display: block; font-size: 11px; }
+  .momentum-list a small { display: block; color: rgba(255,255,255,.46); font: 400 8px var(--mono); }
+  .momentum-bar { position: relative; height: 5px; margin-top: 15px; background: rgba(255,255,255,.1); }
+  .momentum-bar span { position: absolute; left: 0; bottom: 9px; color: rgba(255,255,255,.48); font: 500 7px var(--mono); }
+  .momentum-bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--blue), var(--lime)); animation: grow .8s ease both; }
+  .momentum-list li > b { text-align: right; color: var(--lime); font: 500 19px var(--display); }
+  .momentum-list li > b.down { color: #ff8a74; }
+  .momentum-list li > b small { display: block; color: rgba(255,255,255,.4); font: 400 7px var(--mono); }
+  .location-tape { display: grid; grid-template-columns: 170px repeat(4, 1fr); border: 1px solid var(--line-strong); border-top: 0; }
+  .location-tape > * { min-height: 62px; padding: 14px; border-right: 1px solid var(--line); }
+  .location-tape .tape-label { display: grid; grid-row: span 2; align-items: center; color: var(--ink-soft); background: var(--paper-deep); font: 600 9px var(--mono); letter-spacing: .08em; }
+  .location-tape div:nth-child(n+6) { border-top: 1px solid var(--line); }
+  .location-tape div:nth-child(5n), .location-tape div:last-child { border-right: 0; }
+  .location-tape div small { display: block; color: var(--orange); font: 500 7px var(--mono); }
+  .location-tape div strong { display: block; max-width: 180px; overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+  .location-tape div span { color: var(--ink-soft); font: 500 8px var(--mono); }
+  @media (max-width: 1050px) { .brief-grid { grid-template-columns: repeat(2, 1fr); } .brief-card:nth-child(2) { border-right: 0; } .brief-card:nth-child(-n+2) { border-bottom: 1px solid var(--line-strong); } }
+  @media (max-width: 980px) { .location-tape { grid-template-columns: repeat(2, 1fr); } .location-tape .tape-label { grid-column: 1 / -1; grid-row: auto; } .location-tape > * { border-top: 1px solid var(--line); } .company-tools { flex-direction: column; width: 100%; } }
+  @media (max-width: 800px) { .momentum-board { grid-template-columns: 1fr; } .momentum-board > aside { border-right: 0; border-bottom: 1px solid rgba(255,255,255,.22); } .momentum-board > aside > strong { margin-top: 25px; } .momentum-board > aside > small { margin-top: 25px; } }
+  @media (max-width: 600px) { .momentum-list li { grid-template-columns: 28px minmax(130px, 1fr) 65px; padding: 9px 13px; } .momentum-bar { display: none; } }
+  @media (max-width: 620px) { .decision-brief > header { grid-template-columns: 1fr; } .brief-grid { grid-template-columns: 1fr; } .brief-card { min-height: 245px; border-right: 0; border-bottom: 1px solid var(--line-strong); } .brief-card:last-child { border-bottom: 0; } }
+  @media (max-width: 520px) { .location-tape { grid-template-columns: 1fr; } .location-tape div { border-right: 0; } .company-sort select { min-width: 150px; } }
+</style>

@@ -1,0 +1,20 @@
+{
+  "jobs": [
+    {
+      "id": 101,
+      "title": "Senior Machine Learning Engineer",
+      "absolute_url": "https://boards.greenhouse.io/example/jobs/101",
+      "updated_at": "2026-08-08T15:00:00Z",
+      "first_published": "2026-07-29T15:00:00Z",
+      "location": { "name": "Toronto, ON (Remote)" },
+      "departments": [{ "name": "Engineering" }]
+    },
+    {
+      "id": 102,
+      "title": "Enterprise Account Executive",
+      "absolute_url": "https://boards.greenhouse.io/example/jobs?gh_jid=102",
+      "location": { "name": "New York, NY" },
+      "departments": [{ "name": "Sales" }]
+    }
+  ]
+}

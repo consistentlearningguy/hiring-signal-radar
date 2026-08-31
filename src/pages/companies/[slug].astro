@@ -1,0 +1,90 @@
+---
+import Layout from '@/layouts/Layout.astro';
+import Metric from '@/components/Metric.astro';
+import TrendChart from '@/components/TrendChart.astro';
+import FunctionBars from '@/components/FunctionBars.astro';
+import { companies } from '@/data/companies';
+import { buildPublicationSeries } from '@/lib/publication-history';
+import { ROLE_COLORS, ROLE_FUNCTIONS, type CollectionStatus, type CompanyProfile, type NormalizedJob } from '@/lib/types';
+import profilesRaw from '../../../public/data/companies.json';
+import jobsRaw from '../../../public/data/jobs.json';
+import statusRaw from '../../../public/data/status.json';
+
+export function getStaticPaths() {
+  const profiles = profilesRaw as unknown as CompanyProfile[];
+  return companies.map((company) => ({ params: { slug: company.id }, props: { profile: profiles.find((profile) => profile.id === company.id)! } }));
+}
+
+interface Props { profile: CompanyProfile; }
+const { profile } = Astro.props as Props;
+const jobs = (jobsRaw as NormalizedJob[]).filter((job) => job.companyId === profile.id);
+const currentJobs = jobs.filter((job) => job.current).sort((a, b) => b.firstSeen.localeCompare(a.firstSeen) || a.title.localeCompare(b.title));
+const status = statusRaw as CollectionStatus;
+const publicationSeries = buildPublicationSeries(jobs, status.generatedAt.slice(0, 10));
+const dateLabels = publicationSeries.map((point) => new Intl.DateTimeFormat('en-CA', { month: 'short', day: 'numeric', year: '2-digit', timeZone: 'UTC' }).format(new Date(`${point.date}T00:00:00Z`)));
+const functionPublicationDatasets = ROLE_FUNCTIONS.map((role) => {
+  const roleSeries = buildPublicationSeries(jobs.filter((job) => job.function === role), status.generatedAt.slice(0, 10));
+  const rollingByDate = new Map(roleSeries.map((point) => [point.date, point.rolling7]));
+  return { label: role, data: publicationSeries.map((point) => rollingByDate.get(point.date) ?? 0), color: ROLE_COLORS[role] };
+});
+const sourceUrl = profile.provider === 'greenhouse'
+  ? `https://boards-api.greenhouse.io/v1/boards/${profile.boardToken}/jobs`
+  : profile.provider === 'lever'
+    ? `https://api.lever.co/v0/postings/${profile.boardToken}?mode=json`
+    : `https://api.ashbyhq.com/posting-api/job-board/${profile.boardToken}`;
+const base = import.meta.env.BASE_URL;
+const signed = (value: number) => `${value > 0 ? '+' : ''}${value}`;
+const companyLabel = profile.jobSeekerOnly ? 'EXPANDED EMPLOYER COVERAGE' : `${profile.exchange} · ${profile.headquarters}`;
+---
+
+<Layout title={`${profile.name}${profile.ticker ? ` (${profile.ticker})` : ''} hiring activity — Hiring Signal Radar`} description={`Track current openings and hiring activity by function at ${profile.name}.`} rss={`${base}rss/${profile.id}.xml`}>
+  <div class="page-shell" style={`--company:${profile.color}`}>
+    <section class="company-hero">
+      <p class="breadcrumb"><a href={profile.jobSeekerOnly ? `${base}jobs/` : base}>← {profile.jobSeekerOnly ? 'JOB DISCOVERY' : 'INVESTOR VIEW'}</a> / COMPANY PROFILE{profile.ticker ? ` / ${profile.ticker}` : ''}</p>
+      <div class="company-title-row reveal">
+        <h1><span class="symbol"></span>{profile.name}</h1>
+        <div class="company-meta"><strong>{profile.ticker || 'CAREERS'}</strong><span>{companyLabel}{profile.jobSeekerOnly ? ` · ${profile.headquarters}` : ''}</span></div>
+      </div>
+      <div class="company-description"><p>{profile.description}</p><a class="source-pill" href={sourceUrl} target="_blank" rel="noreferrer">SOURCE · {profile.provider.toUpperCase()} ↗</a></div>
+    </section>
+    {profile.stale && <div class="stale-company"><i class="status-dot stale"></i><strong>Source stale.</strong> Showing the last successful snapshot from {profile.lastSuccess ? new Date(profile.lastSuccess).toLocaleString('en-CA', { timeZone: 'UTC' }) : 'an earlier collection'}.</div>}
+    <section class="profile-metrics">
+      <Metric label="Current openings" value={profile.currentOpenings.toLocaleString()} suffix="roles" />
+      <Metric label="Published · 7d" value={profile.published7d} suffix="roles" />
+      <Metric label="Vs prior · 7d" value={signed(profile.publicationDelta7d)} suffix="publication pace" />
+      <Metric label="Published · 30d" value={profile.published30d} suffix="roles" />
+    </section>
+    <section class="profile-content">
+      <article class="profile-panel"><div class="panel-head"><div><h3>FUNCTION MOMENTUM OVER TIME</h3><p>TRAILING 7-DAY PUBLICATIONS · OFFICIAL TIMESTAMPS</p></div></div><TrendChart labels={dateLabels} datasets={functionPublicationDatasets} rangeControls trackingSince={publicationSeries[0]?.date ?? status.trackingSince} beginAtZero showLegend /><p class="history-provenance"><strong>HISTORICAL BASIS</strong> Official publication dates for roles observed by this tracker. Pre-tracking removals are not represented.</p></article>
+      <aside class="profile-aside"><div class="panel-head"><div><h3>FUNCTION MIX</h3><p>CURRENT OPENINGS</p></div></div><FunctionBars counts={profile.functionCounts} /></aside>
+    </section>
+    <section class="company-jobs" aria-labelledby="openings-title">
+      <div class="section-heading"><div><p class="section-kicker">CURRENT INVENTORY</p><h2 id="openings-title">Open roles</h2></div><div class="company-job-tools"><label class="search-field"><span class="sr-only">Search roles</span><input data-role-search type="search" placeholder="Filter role or location" /></label><a class="source-pill" href={`${base}rss/${profile.id}.xml`}>RSS FEED ↓</a></div></div>
+      <div class="job-results-head"><h2><span data-company-result-count>{currentJobs.length}</span> MATCHING ROLES</h2><p>DIRECT SOURCE LINKS ↗</p></div>
+      <ol class="job-list">
+        {currentJobs.map((job) => <li class="job-card" data-role-row data-search={`${job.title} ${job.location} ${job.function} ${job.level}`.toLowerCase()}><div><h3>{job.title}</h3><div class="meta">{job.level} · {job.function} · {job.location}{job.remote ? ' · REMOTE' : ''}</div></div><time datetime={job.firstSeen}>SEEN {job.firstSeen}</time><span></span><a class="apply-link" href={job.sourceUrl} target="_blank" rel="noreferrer" aria-label={`Open original posting for ${job.title}`}>↗</a></li>)}
+      </ol>
+    </section>
+  </div>
+</Layout>
+
+<script>
+  const roleSearch = document.querySelector<HTMLInputElement>('[data-role-search]');
+  const resultCount = document.querySelector<HTMLElement>('[data-company-result-count]');
+  roleSearch?.addEventListener('input', () => {
+    const query = roleSearch.value.trim().toLowerCase();
+    let visible = 0;
+    document.querySelectorAll<HTMLElement>('[data-role-row]').forEach((row) => {
+      row.hidden = !row.dataset.search?.includes(query);
+      if (!row.hidden) visible += 1;
+    });
+    if (resultCount) resultCount.textContent = String(visible);
+  });
+</script>
+
+<style>
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
+  .company-job-tools { display: flex; gap: 10px; align-items: center; }
+  .stale-company { display: flex; align-items: center; gap: 10px; padding: 15px 20px; color: #8c2a22; border: 1px solid #c83f31; border-top: 0; font: 500 10px var(--mono); }
+  @media (max-width: 650px) { .company-job-tools { align-items: stretch; flex-direction: column; margin-top: 20px; } }
+</style>
