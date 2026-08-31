@@ -36,6 +36,9 @@ jobs:
       - name: Install dependencies
         run: npm ci --omit=optional
 
+      - name: Materialize committed snapshot
+        run: npm run materialize
+
       - name: Test collector logic
         run: npm test
 
