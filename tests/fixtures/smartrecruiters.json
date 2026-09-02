@@ -1,0 +1,26 @@
+{
+  "content": [
+    {
+      "id": "ABC123",
+      "name": "Senior Backend Engineer",
+      "releasedDate": "2026-08-01T12:00:00.000Z",
+      "location": {
+        "city": "Toronto",
+        "region": "Ontario",
+        "country": "ca",
+        "remote": false
+      }
+    },
+    {
+      "id": "DEF456",
+      "name": "Sales Development Representative",
+      "releasedDate": "2026-08-05T09:00:00.000Z",
+      "location": {
+        "city": "New York",
+        "region": "New York",
+        "country": "us",
+        "remote": true
+      }
+    }
+  ]
+}

@@ -73,6 +73,7 @@ export function updateHistory(history: HistoryFile, company: CompanyConfig, stat
     current: jobs.filter((job) => job.current).length,
     opened: jobs.filter((job) => job.firstSeen === day).length,
     removed: jobs.filter((job) => job.removedAt === day).length,
+    remote: jobs.filter((job) => job.current && job.remote).length,
     stale: state.stale
   };
   const points = history.companies[company.id] ?? [];

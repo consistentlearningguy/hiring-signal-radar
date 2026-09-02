@@ -94,8 +94,34 @@ export const JOB_CATEGORY_COLORS: Record<JobCategory, string> = {
   Other: '#78849a'
 };
 
-export type DirectProvider = 'greenhouse' | 'lever' | 'ashby';
+export type DirectProvider = 'greenhouse' | 'lever' | 'ashby' | 'workday' | 'smartrecruiters' | 'workable' | 'recruitee';
 export type Provider = DirectProvider;
+
+export const SECTORS = [
+  'Data & AI',
+  'Infrastructure & Cloud',
+  'Cybersecurity',
+  'Fintech & Crypto',
+  'AdTech & Media',
+  'Consumer & Marketplaces',
+  'Health & Bio',
+  'Hardware & Space',
+  'Enterprise Software'
+] as const;
+
+export type Sector = (typeof SECTORS)[number];
+
+export const SECTOR_COLORS: Record<Sector, string> = {
+  'Data & AI': '#7a4ce0',
+  'Infrastructure & Cloud': '#0b55d4',
+  Cybersecurity: '#d64550',
+  'Fintech & Crypto': '#128f5b',
+  'AdTech & Media': '#f25b2a',
+  'Consumer & Marketplaces': '#d14f8b',
+  'Health & Bio': '#14835d',
+  'Hardware & Space': '#8a6200',
+  'Enterprise Software': '#46679b'
+};
 
 export interface CompanyConfig {
   id: string;
@@ -104,7 +130,8 @@ export interface CompanyConfig {
   exchange: 'NYSE' | 'NASDAQ' | 'UNLISTED';
   jobSeekerOnly?: boolean;
   provider: DirectProvider;
-  boardToken: string;
+  boardToken: string | string[];
+  sector: Sector;
   headquarters: string;
   color: string;
   description: string;
@@ -155,6 +182,7 @@ export interface DailyCompanyPoint {
   current: number;
   opened: number;
   removed: number;
+  remote?: number;
   stale: boolean;
 }
 
@@ -204,8 +232,38 @@ export interface CompanyProfile extends CompanyConfig {
   change7d: number | null;
   change30d: number | null;
   removed7d: number | null;
+  remoteShare: number;
+  medianOpenDays: number | null;
   stale: boolean;
   lastSuccess?: string;
   functionCounts: Record<RoleFunction, number>;
+  levelCounts: Record<RoleLevel, number>;
   locationCounts: Record<string, number>;
+}
+
+export interface MarketSector {
+  name: Sector;
+  color: string;
+  companies: number;
+  currentOpenings: number;
+  published7d: number;
+  publicationDelta7d: number;
+  remoteShare: number;
+  medianOpenDays: number | null;
+  leader: { id: string; name: string; ticker: string; currentOpenings: number } | null;
+}
+
+export interface MarketFile {
+  generatedAt: string;
+  day: string;
+  sectors: MarketSector[];
+  aggregates: {
+    currentOpenings: number;
+    published7d: number;
+    publicationDelta7d: number;
+    remoteShare: number;
+    medianOpenDays: number | null;
+    top10PublicationShare30d: number;
+    levelCounts: Record<RoleLevel, number>;
+  };
 }

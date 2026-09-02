@@ -13,3 +13,9 @@ npm-debug.log*
 /public/rss/
 /playwright-report/
 /test-results/
+
+# manual discovery runs
+/discovered-boards.json
+/discovered-*.json
+/candidate-tokens.txt
+/*-check.json

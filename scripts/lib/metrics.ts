@@ -1,4 +1,18 @@
-import { ROLE_FUNCTIONS, type CompanyConfig, type CompanyProfile, type CompanyState, type DailyCompanyPoint, type NormalizedJob, type RoleFunction } from '../../src/lib/types';
+import { ROLE_FUNCTIONS, ROLE_LEVELS, type CompanyConfig, type CompanyProfile, type CompanyState, type DailyCompanyPoint, type NormalizedJob, type RoleFunction, type RoleLevel } from '../../src/lib/types';
+
+export function median(values: number[]): number | null {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  const value = sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+  return Math.round(value * 10) / 10;
+}
+
+export function postingOpenDays(job: NormalizedJob): number | null {
+  if (!job.removedAt) return null;
+  const start = (job.sourcePublishedAt ?? job.firstSeen).slice(0, 10);
+  return Math.max(0, Math.round((Date.parse(`${job.removedAt}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86_400_000));
+}
 
 function dayDiff(from: string, to: string): number {
   return Math.floor((Date.parse(to) - Date.parse(from)) / 86_400_000);
@@ -29,9 +43,11 @@ export function profileFor(company: CompanyConfig, state: CompanyState, points: 
   const jobs = Object.values(state.jobs);
   const current = jobs.filter((job) => job.current);
   const functionCounts = Object.fromEntries(ROLE_FUNCTIONS.map((role) => [role, 0])) as Record<RoleFunction, number>;
+  const levelCounts = Object.fromEntries(ROLE_LEVELS.map((level) => [level, 0])) as Record<RoleLevel, number>;
   const locationGroups = new Map<string, { label: string; count: number }>();
   for (const job of current) {
     functionCounts[job.function] += 1;
+    levelCounts[job.level] += 1;
     const key = job.location.toLocaleLowerCase('en-CA');
     const group = locationGroups.get(key);
     if (group) group.count += 1;
@@ -55,11 +71,14 @@ export function profileFor(company: CompanyConfig, state: CompanyState, points: 
     publicationDelta30d: published30d - publishedPrior30d,
     publicationIntensity7d: current.length ? Math.round((published7d / current.length) * 1000) / 10 : 0,
     removed7d: enough7 ? jobs.filter((job) => job.removedAt && job.removedAt >= cutoff(day, 7)).length : null,
+    remoteShare: current.length ? Math.round((current.filter((job) => job.remote).length / current.length) * 1000) / 10 : 0,
+    medianOpenDays: median(jobs.map(postingOpenDays).filter((value): value is number => value !== null)),
     change7d: changeFor(points, day, 7),
     change30d: changeFor(points, day, 30),
     stale: state.stale,
     lastSuccess: state.lastSuccess,
     functionCounts,
+    levelCounts,
     locationCounts: Object.fromEntries([...locationGroups.values()].sort((a, b) => b.count - a.count).slice(0, 12).map(({ label, count }) => [label, count]))
   };
 }

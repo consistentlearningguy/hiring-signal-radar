@@ -5,7 +5,7 @@ import type { CollectorState, HistoryFile } from '../src/lib/types';
 import { normalizeGreenhouse } from '../scripts/lib/normalize';
 import { mergeFailedSnapshot, mergeSuccessfulSnapshot, pruneExpiredJobs, updateHistory } from '../scripts/lib/state';
 
-const company = companies[0];
+const company = { ...companies[0], boardToken: companies[0].boardToken as string };
 const job = normalizeGreenhouse({ id: 1, title: 'Software Engineer', absolute_url: 'https://example.test/1', location: { name: 'Toronto, ON' } }, company, '2026-08-01');
 
 test('handles opened, updated, two-miss removal, and recovery', () => {

@@ -1,0 +1,28 @@
+{
+  "jobs": [
+    {
+      "title": "Full-Stack Engineer",
+      "shortlink": "https://apply.workable.com/example/j/ABC001/",
+      "code": "ABC001",
+      "created_at": "2026-08-02T10:00:00Z",
+      "department": "Engineering",
+      "location": {
+        "city": "Vancouver",
+        "state": "BC",
+        "country": "Canada"
+      }
+    },
+    {
+      "title": "Account Executive, Enterprise",
+      "shortlink": "https://apply.workable.com/example/j/DEF002/",
+      "code": "DEF002",
+      "created_at": "2026-08-04T10:00:00Z",
+      "department": "Sales",
+      "location": {
+        "city": "Boston",
+        "state": "MA",
+        "country": "United States"
+      }
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "offers": [
+    {
+      "id": 4401,
+      "title": "Product Designer",
+      "location": "Amsterdam, Netherlands",
+      "country": "Netherlands",
+      "published_at": "2026-08-03T08:00:00.000Z",
+      "careers_url": "https://example.recruitee.com/en/o/product-designer"
+    },
+    {
+      "id": 4402,
+      "title": "Machine Learning Engineer",
+      "location": "Remote",
+      "country": "Canada",
+      "published_at": "2026-08-06T08:00:00.000Z",
+      "careers_url": "https://example.recruitee.com/en/o/machine-learning-engineer"
+    }
+  ]
+}

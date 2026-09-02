@@ -4,8 +4,9 @@ import { companies } from '../src/data/companies';
 import type { CollectionStatus, CollectorState, CompanyConfig, HistoryFile, NormalizedJob, PublicationHistoryFile } from '../src/lib/types';
 import { buildPublicationSeries } from '../src/lib/publication-history';
 import { profileFor } from './lib/metrics';
+import { buildMarketFile } from './lib/market';
 import { classifyJobCategory, classifyLevel, inferCountry } from './lib/classification';
-import { deduplicateJobs, normalizeAshby, normalizeGreenhouse, normalizeLever, normalizeSourceUrl, type AshbyJob, type GreenhouseJob, type LeverJob } from './lib/normalize';
+import { deduplicateJobs, normalizeAshby, normalizeGreenhouse, normalizeLever, normalizeRecruitee, normalizeSmartRecruiters, normalizeWorkable, normalizeWorkday, normalizeSourceUrl, parseWorkdayToken, type AshbyJob, type GreenhouseJob, type LeverJob, type RecruiteeJob, type SmartRecruitersJob, type WorkableJob, type WorkdayJob } from './lib/normalize';
 import { emptyCompanyState, emptyState, mergeFailedSnapshot, mergeSuccessfulSnapshot, pruneExpiredJobs, updateHistory } from './lib/state';
 
 const root = process.cwd();
@@ -26,30 +27,87 @@ async function readJson<T>(file: string, fallback: T): Promise<T> {
   }
 }
 
-async function fetchJson(url: string): Promise<unknown> {
+async function fetchJson(url: string, init?: RequestInit): Promise<unknown> {
   const response = await fetch(url, {
-    headers: { 'user-agent': `HiringSignalRadar/1.0 (+${process.env.PUBLIC_REPOSITORY_URL || 'https://github.com'})` },
+    ...init,
+    headers: {
+      'user-agent': `HiringSignalRadar/1.0 (+${process.env.PUBLIC_REPOSITORY_URL || 'https://github.com'})`,
+      ...(init?.method === 'POST' ? { 'content-type': 'application/json' } : {}),
+      ...init?.headers
+    },
     signal: AbortSignal.timeout(20_000)
   });
   if (!response.ok) throw new Error(`HTTP ${response.status} from ${new URL(url).hostname}`);
   return response.json();
 }
 
-async function collectCompany(company: CompanyConfig): Promise<NormalizedJob[]> {
-  if (fixtureMode) {
-    const fixture = path.join(root, 'tests', 'fixtures', `${company.provider}.json`);
-    const payload = await readJson<unknown>(fixture, company.provider === 'lever' ? [] : { jobs: [] });
-    return normalizePayload(company, payload);
+const WORKDAY_PAGE_SIZE = 20;
+const WORKDAY_PAGE_LIMIT = 500;
+
+async function fetchWorkdayBoard(host: string, tenant: string, site: string): Promise<WorkdayJob[]> {
+  const url = `https://${tenant}.${host}.myworkdayjobs.com/wday/cxs/${tenant}/${site}/jobs`;
+  const postings: WorkdayJob[] = [];
+  for (let offset = 0; offset < WORKDAY_PAGE_LIMIT * WORKDAY_PAGE_SIZE; offset += WORKDAY_PAGE_SIZE) {
+    const payload = await fetchJson(url, { method: 'POST', body: JSON.stringify({ appliedFacets: {}, limit: WORKDAY_PAGE_SIZE, offset }) }) as { total?: number; jobPostings?: WorkdayJob[] };
+    const page = payload.jobPostings;
+    if (!Array.isArray(page)) throw new Error('Invalid Workday response');
+    postings.push(...page);
+    if (page.length === 0 || (typeof payload.total === 'number' && postings.length >= payload.total)) break;
   }
-  const url = company.provider === 'greenhouse'
-    ? `https://boards-api.greenhouse.io/v1/boards/${company.boardToken}/jobs`
-    : company.provider === 'lever'
-      ? `https://api.lever.co/v0/postings/${company.boardToken}?mode=json`
-      : `https://api.ashbyhq.com/posting-api/job-board/${company.boardToken}`;
-  return normalizePayload(company, await fetchJson(url));
+  return postings;
 }
 
-function normalizePayload(company: CompanyConfig, payload: unknown): NormalizedJob[] {
+function boardTokensFor(company: CompanyConfig): string[] {
+  return Array.isArray(company.boardToken) ? company.boardToken : [company.boardToken];
+}
+
+async function collectBoard(company: CompanyConfig, token: string): Promise<NormalizedJob[]> {
+  const board = { ...company, boardToken: token } as const;
+  if (fixtureMode) {
+    const fixture = path.join(root, 'tests', 'fixtures', `${company.provider}.json`);
+    const payload = await readJson<unknown>(fixture, emptyPayloadFor(company.provider));
+    return normalizePayload(board, payload);
+  }
+  if (company.provider === 'greenhouse') {
+    return normalizePayload(board, await fetchJson(`https://boards-api.greenhouse.io/v1/boards/${token}/jobs`));
+  }
+  if (company.provider === 'lever') {
+    return normalizePayload(board, await fetchJson(`https://api.lever.co/v0/postings/${token}?mode=json`));
+  }
+  if (company.provider === 'ashby') {
+    return normalizePayload(board, await fetchJson(`https://api.ashbyhq.com/posting-api/job-board/${token}`));
+  }
+  if (company.provider === 'smartrecruiters') {
+    return normalizePayload(board, await fetchJson(`https://api.smartrecruiters.com/v1/companies/${token}/postings?limit=100`));
+  }
+  if (company.provider === 'workable') {
+    return normalizePayload(board, await fetchJson(`https://apply.workable.com/api/v1/widget/accounts/${token}?details=true`));
+  }
+  if (company.provider === 'recruitee') {
+    return normalizePayload(board, await fetchJson(`https://${token}.recruitee.com/api/offers/`));
+  }
+  const { host, tenant, site } = parseWorkdayToken(token);
+  return normalizePayload(board, await fetchWorkdayBoard(host, tenant, site));
+}
+
+function emptyPayloadFor(provider: CompanyConfig['provider']): unknown {
+  switch (provider) {
+    case 'greenhouse': return { jobs: [] };
+    case 'lever': return [];
+    case 'ashby': return { jobs: [] };
+    case 'smartrecruiters': return { content: [] };
+    case 'workable': return { jobs: [] };
+    case 'recruitee': return { offers: [] };
+    case 'workday': return [];
+  }
+}
+
+async function collectCompany(company: CompanyConfig): Promise<NormalizedJob[]> {
+  const boards = await Promise.all(boardTokensFor(company).map((token) => collectBoard(company, token)));
+  return deduplicateJobs(boards.flat());
+}
+
+function normalizePayload(company: CompanyConfig & { boardToken: string }, payload: unknown): NormalizedJob[] {
   if (company.provider === 'greenhouse') {
     const jobs = (payload as { jobs?: GreenhouseJob[] }).jobs;
     if (!Array.isArray(jobs)) throw new Error('Invalid Greenhouse response');
@@ -59,6 +117,25 @@ function normalizePayload(company: CompanyConfig, payload: unknown): NormalizedJ
     const jobs = (payload as { jobs?: AshbyJob[] }).jobs;
     if (!Array.isArray(jobs)) throw new Error('Invalid Ashby response');
     return deduplicateJobs(jobs.filter((job) => job.isListed !== false).map((job) => normalizeAshby(job, company, day)));
+  }
+  if (company.provider === 'smartrecruiters') {
+    const jobs = (payload as { content?: SmartRecruitersJob[] }).content;
+    if (!Array.isArray(jobs)) throw new Error('Invalid SmartRecruiters response');
+    return deduplicateJobs(jobs.map((job) => normalizeSmartRecruiters(job, company, day)));
+  }
+  if (company.provider === 'workable') {
+    const jobs = (payload as { jobs?: WorkableJob[] }).jobs;
+    if (!Array.isArray(jobs)) throw new Error('Invalid Workable response');
+    return deduplicateJobs(jobs.map((job) => normalizeWorkable(job, company, day)));
+  }
+  if (company.provider === 'recruitee') {
+    const jobs = (payload as { offers?: RecruiteeJob[] }).offers;
+    if (!Array.isArray(jobs)) throw new Error('Invalid Recruitee response');
+    return deduplicateJobs(jobs.map((job) => normalizeRecruitee(job, company, day)));
+  }
+  if (company.provider === 'workday') {
+    if (!Array.isArray(payload)) throw new Error('Invalid Workday response');
+    return deduplicateJobs((payload as WorkdayJob[]).map((job) => normalizeWorkday(job, company, day)));
   }
   if (!Array.isArray(payload)) throw new Error('Invalid Lever response');
   return deduplicateJobs((payload as LeverJob[]).map((job) => normalizeLever(job, company, day)));
@@ -162,6 +239,7 @@ async function main(): Promise<void> {
   await writeJson(path.join(root, 'public', 'data', 'companies.json'), profiles);
   await writeJson(path.join(root, 'public', 'data', 'jobs.json'), publicJobs);
   await writeJson(path.join(root, 'public', 'data', 'publication-history.json'), publicationHistory);
+  await writeJson(path.join(root, 'public', 'data', 'market.json'), buildMarketFile(profiles, allJobs, generatedDay, generatedAt));
 
   const companyDataDirectory = path.join(root, 'public', 'data', 'companies');
   const rssDirectory = path.join(root, 'public', 'rss');

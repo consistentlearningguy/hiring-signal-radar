@@ -1,6 +1,8 @@
 import type { CompanyConfig, NormalizedJob } from '../../src/lib/types';
 import { classifyJobCategory, classifyLevel, classifyRole, inferCountry, isRemoteLocation } from './classification';
 
+export type BoardCompany = Omit<CompanyConfig, 'boardToken'> & { boardToken: string };
+
 export interface GreenhouseJob {
   id: number | string;
   title: string;
@@ -42,6 +44,56 @@ export interface AshbyJob {
   applyUrl?: string;
 }
 
+export interface WorkdayJob {
+  title: string;
+  externalPath: string;
+  locationsText?: string;
+  postedOn?: string;
+}
+
+export interface SmartRecruitersJob {
+  id: string;
+  name: string;
+  releasedDate?: string;
+  location?: {
+    city?: string;
+    region?: string;
+    country?: string;
+    remote?: boolean;
+  };
+}
+
+export interface WorkableJob {
+  title: string;
+  shortlink: string;
+  code?: string;
+  created_at?: string;
+  department?: string;
+  location?: {
+    city?: string;
+    state?: string;
+    country?: string;
+  };
+}
+
+export interface RecruiteeJob {
+  id: number | string;
+  title: string;
+  location?: string;
+  country?: string;
+  published_at?: string;
+  careers_url?: string;
+}
+
+export function parseWorkdayToken(token: string): { host: string; tenant: string; site: string } {
+  const parts = token.split('/');
+  if (parts.length !== 3 || parts.some((part) => !part.trim())) {
+    throw new Error(`Invalid Workday board token "${token}" (expected "host/tenant/site", e.g. "wd5/example/Example")`);
+  }
+  const [host, tenant, site] = parts.map((part) => part.trim());
+  return { host, tenant, site };
+}
+
 function clean(value: string | undefined, fallback = 'Location not listed'): string {
   return value?.replace(/\s+/g, ' ').trim() || fallback;
 }
@@ -56,7 +108,7 @@ export function normalizeSourceUrl(value: string): string {
   return url.toString();
 }
 
-function baseJob(company: CompanyConfig, sourceId: string, day: string) {
+function baseJob(company: BoardCompany, sourceId: string, day: string) {
   return {
     id: `${company.provider}:${company.id}:${sourceId}`,
     sourceId,
@@ -71,7 +123,7 @@ function baseJob(company: CompanyConfig, sourceId: string, day: string) {
   } as const;
 }
 
-export function normalizeGreenhouse(job: GreenhouseJob, company: CompanyConfig, day: string): NormalizedJob {
+export function normalizeGreenhouse(job: GreenhouseJob, company: BoardCompany, day: string): NormalizedJob {
   const location = clean(job.location?.name ?? job.offices?.map((office) => office.location || office.name).filter(Boolean).join(' · '));
   const team = job.departments?.map((department) => department.name).filter(Boolean).join(' ') ?? '';
   return {
@@ -89,7 +141,7 @@ export function normalizeGreenhouse(job: GreenhouseJob, company: CompanyConfig, 
   };
 }
 
-export function normalizeLever(job: LeverJob, company: CompanyConfig, day: string): NormalizedJob {
+export function normalizeLever(job: LeverJob, company: BoardCompany, day: string): NormalizedJob {
   const listedLocations = job.categories?.allLocations?.filter(Boolean).join(' · ');
   const location = clean(listedLocations || job.categories?.location);
   const team = `${job.categories?.team ?? ''} ${job.categories?.department ?? ''}`;
@@ -107,7 +159,7 @@ export function normalizeLever(job: LeverJob, company: CompanyConfig, day: strin
   };
 }
 
-export function normalizeAshby(job: AshbyJob, company: CompanyConfig, day: string): NormalizedJob {
+export function normalizeAshby(job: AshbyJob, company: BoardCompany, day: string): NormalizedJob {
   const locations = [job.location, ...(job.secondaryLocations ?? []).map((entry) => entry.location)]
     .map((location) => location?.replace(/\s+/g, ' ').trim())
     .filter((location): location is string => Boolean(location));
@@ -124,6 +176,86 @@ export function normalizeAshby(job: AshbyJob, company: CompanyConfig, day: strin
     remote: job.isRemote === true || job.workplaceType === 'Remote' || isRemoteLocation(location),
     sourceUrl: normalizeSourceUrl(job.applyUrl || job.jobUrl || `https://jobs.ashbyhq.com/${company.boardToken}/${job.id}`),
     sourcePublishedAt: job.publishedAt
+  };
+}
+
+function approximateWorkdayPublished(postedOn: string | undefined, day: string): string | undefined {
+  const match = postedOn?.match(/Posted\s+(Today|Yesterday|(\d+)\+?\s+Days?\s+Ago)/i);
+  if (!match) return undefined;
+  const date = new Date(`${day}T00:00:00Z`);
+  if (match[1].toLowerCase() === 'today') return date.toISOString();
+  const days = match[1].toLowerCase() === 'yesterday' ? 1 : parseInt(match[2] ?? '', 10);
+  if (!Number.isFinite(days)) return undefined;
+  date.setUTCDate(date.getUTCDate() - days);
+  return date.toISOString();
+}
+
+export function normalizeWorkday(job: WorkdayJob, company: BoardCompany, day: string): NormalizedJob {
+  const { host, tenant, site } = parseWorkdayToken(company.boardToken);
+  const location = clean(job.locationsText);
+  const origin = `https://${tenant}.${host}.myworkdayjobs.com/en-US/${site}`;
+  return {
+    ...baseJob(company, job.externalPath, day),
+    title: clean(job.title, 'Untitled role'),
+    function: classifyRole(job.title),
+    category: classifyJobCategory(job.title),
+    level: classifyLevel(job.title),
+    location,
+    country: inferCountry(location),
+    remote: isRemoteLocation(location),
+    sourceUrl: normalizeSourceUrl(`${origin}${job.externalPath}`),
+    sourcePublishedAt: approximateWorkdayPublished(job.postedOn, day)
+  };
+}
+
+export function normalizeSmartRecruiters(job: SmartRecruitersJob, company: BoardCompany, day: string): NormalizedJob {
+  const { city, region, country, remote } = job.location ?? {};
+  const location = clean([city, region, country].filter(Boolean).join(', '));
+  return {
+    ...baseJob(company, String(job.id), day),
+    title: clean(job.name, 'Untitled role'),
+    function: classifyRole(job.name),
+    category: classifyJobCategory(job.name),
+    level: classifyLevel(job.name),
+    location,
+    country: inferCountry(location),
+    remote: remote === true || isRemoteLocation(location),
+    sourceUrl: normalizeSourceUrl(`https://jobs.smartrecruiters.com/${company.boardToken}/${job.id}`),
+    sourcePublishedAt: job.releasedDate
+  };
+}
+
+export function normalizeWorkable(job: WorkableJob, company: BoardCompany, day: string): NormalizedJob {
+  const { city, state, country } = job.location ?? {};
+  const location = clean([city, state, country].filter(Boolean).join(', '));
+  const sourceId = job.code || decodeURIComponent(new URL(job.shortlink).pathname.split('/').filter(Boolean).at(-1) ?? job.shortlink);
+  return {
+    ...baseJob(company, sourceId, day),
+    title: clean(job.title, 'Untitled role'),
+    function: classifyRole(job.title, job.department ?? ''),
+    category: classifyJobCategory(job.title, job.department ?? ''),
+    level: classifyLevel(job.title),
+    location,
+    country: inferCountry(location),
+    remote: isRemoteLocation(location),
+    sourceUrl: normalizeSourceUrl(job.shortlink),
+    sourcePublishedAt: job.created_at
+  };
+}
+
+export function normalizeRecruitee(job: RecruiteeJob, company: BoardCompany, day: string): NormalizedJob {
+  const location = clean(job.country && job.location && !job.location.includes(job.country) ? `${job.location}, ${job.country}` : job.location);
+  return {
+    ...baseJob(company, String(job.id), day),
+    title: clean(job.title, 'Untitled role'),
+    function: classifyRole(job.title),
+    category: classifyJobCategory(job.title),
+    level: classifyLevel(job.title),
+    location,
+    country: inferCountry(location),
+    remote: isRemoteLocation(location),
+    sourceUrl: normalizeSourceUrl(job.careers_url || `https://${company.boardToken}.recruitee.com/o/${job.id}`),
+    sourcePublishedAt: job.published_at
   };
 }
 

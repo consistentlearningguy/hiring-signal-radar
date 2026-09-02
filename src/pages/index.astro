@@ -6,14 +6,17 @@ import TrendChart from '@/components/TrendChart.astro';
 import FunctionBars from '@/components/FunctionBars.astro';
 import CompanyTable from '@/components/CompanyTable.astro';
 import { buildPublicationSeries } from '@/lib/publication-history';
-import { ROLE_COLORS, ROLE_FUNCTIONS, type CollectionStatus, type CompanyProfile, type NormalizedJob, type RoleFunction } from '@/lib/types';
+import { ROLE_COLORS, ROLE_FUNCTIONS, ROLE_LEVELS, type CollectionStatus, type CompanyProfile, type MarketFile, type NormalizedJob, type RoleFunction } from '@/lib/types';
 import companiesRaw from '../../public/data/companies.json';
 import statusRaw from '../../public/data/status.json';
 import jobsRaw from '../../public/data/jobs.json';
+import marketRaw from '../../public/data/market.json';
 
 const allProfiles = companiesRaw as unknown as CompanyProfile[];
 const profiles = allProfiles.filter((profile) => !profile.jobSeekerOnly);
 const status = statusRaw as CollectionStatus;
+const market = marketRaw as unknown as MarketFile;
+const sectorsPresent = [...new Set(profiles.map((profile) => profile.sector))].sort();
 const investorCompanyIds = new Set(profiles.map((profile) => profile.id));
 const jobs = (jobsRaw as NormalizedJob[]).filter((job) => investorCompanyIds.has(job.companyId));
 const currentJobs = jobs.filter((job) => job.current);
@@ -128,8 +131,42 @@ const base = import.meta.env.BASE_URL;
       </div>
     </section>
 
+    <section class="dashboard-section" aria-labelledby="sector-title">
+      <div class="section-heading">
+        <div><p class="section-kicker">02 / SECTOR &amp; STRUCTURE</p><h2 id="sector-title">Where is the build concentrated?</h2></div>
+        <div class="structure-strip" role="list" aria-label="Market structure metrics">
+          <div role="listitem"><strong>{market.aggregates.remoteShare}%</strong><span>REMOTE-LABELED ROLES</span><small>share of current openings across all sectors</small></div>
+          <div role="listitem"><strong>{market.aggregates.medianOpenDays ?? '—'}</strong><span>MEDIAN DAYS POSTED</span><small>typical lifetime of a role before removal</small></div>
+          <div role="listitem"><strong>{market.aggregates.top10PublicationShare30d}%</strong><span>TOP-10 CONCENTRATION</span><small>share of 30d publications from ten largest publishers</small></div>
+        </div>
+      </div>
+      <div class="sector-grid">
+        {market.sectors.map((sector) => (
+          <article class="sector-card" style={`--sector:${sector.color}`}>
+            <header><i></i><strong>{sector.name}</strong><span>{sector.companies} companies</span></header>
+            <div class="sector-figure"><b>{sector.currentOpenings.toLocaleString()}</b><span>OPEN ROLES</span></div>
+            <div class="sector-metrics">
+              <div><span>PUBLISHED · 7D</span><strong>{sector.published7d}</strong></div>
+              <div><span>VS PRIOR 7D</span><strong class:list={{ delta: sector.publicationDelta7d > 0, down: sector.publicationDelta7d < 0 }}>{sector.publicationDelta7d > 0 ? '+' : ''}{sector.publicationDelta7d}</strong></div>
+              <div><span>REMOTE</span><strong>{sector.remoteShare}%</strong></div>
+              <div><span>MEDIAN DAYS POSTED</span><strong>{sector.medianOpenDays ?? '—'}</strong></div>
+            </div>
+            {sector.leader && <footer>LARGEST: <a href={`${base}companies/${sector.leader.id}/`}>{sector.leader.name} {sector.leader.ticker}</a> · {sector.leader.currentOpenings.toLocaleString()} OPEN →</footer>}
+          </article>
+        ))}
+      </div>
+      <div class="seniority-tape" aria-label="Seniority mix of current openings across all tracked companies">
+        <span class="tape-label">SENIORITY MIX · CURRENT OPENINGS</span>
+        {ROLE_LEVELS.map((level) => {
+          const count = market.aggregates.levelCounts[level] ?? 0;
+          const share = Math.round((count / Math.max(market.aggregates.currentOpenings, 1)) * 100);
+          return <div><strong>{level}</strong><span>{count.toLocaleString()} · {share}%</span><i style={`width:${share}%`}></i></div>;
+        })}
+      </div>
+    </section>
+
     <section class="dashboard-section" aria-labelledby="momentum-title">
-      <div class="section-heading"><div><p class="section-kicker">02 / MOMENTUM BOARD</p><h2 id="momentum-title">Which hiring footprints are expanding?</h2></div><p>Ranked by official publication acceleration, with current scale and dominant investment area shown alongside it.</p></div>
+      <div class="section-heading"><div><p class="section-kicker">03 / MOMENTUM BOARD</p><h2 id="momentum-title">Which hiring footprints are expanding?</h2></div><p>Ranked by official publication acceleration, with current scale and dominant investment area shown alongside it.</p></div>
       <div class="momentum-board">
         <aside>
           <p class="eyebrow orange">PUBLICATION ACCELERATION</p>
@@ -153,12 +190,12 @@ const base = import.meta.env.BASE_URL;
     </section>
 
     <section class="dashboard-section" aria-labelledby="companies-title">
-      <div class="section-heading"><div><p class="section-kicker">03 / COMPANY SCREENER</p><h2 id="companies-title">Read every signal</h2></div><div class="company-tools"><label class="search-field"><span class="sr-only">Search companies</span><input data-company-search type="search" placeholder="Search name or ticker" /></label><label class="company-sort"><span>SHOW</span><select data-company-filter><option value="all">All tracked companies</option><option value="accelerating">Accelerating now</option><option value="publishing">Published in 7d</option><option value="scale">100+ open roles</option></select></label><label class="company-sort"><span>SORT</span><select data-company-sort><option value="openings">Most open roles</option><option value="acceleration">Fastest acceleration</option><option value="published">Most published · 7d</option><option value="published30">Most published · 30d</option><option value="intensity">Highest 7d intensity</option><option value="name">Company A–Z</option></select></label></div></div>
+      <div class="section-heading"><div><p class="section-kicker">04 / COMPANY SCREENER</p><h2 id="companies-title">Read every signal</h2></div><div class="company-tools"><label class="search-field"><span class="sr-only">Search companies</span><input data-company-search type="search" placeholder="Search name or ticker" /></label><label class="company-sort"><span>SECTOR</span><select data-sector-filter><option value="all">All sectors</option>{sectorsPresent.map((sector) => <option value={sector}>{sector}</option>)}</select></label><label class="company-sort"><span>SHOW</span><select data-company-filter><option value="all">All tracked companies</option><option value="accelerating">Accelerating now</option><option value="publishing">Published in 7d</option><option value="scale">100+ open roles</option></select></label><label class="company-sort"><span>SORT</span><select data-company-sort><option value="openings">Most open roles</option><option value="acceleration">Fastest acceleration</option><option value="published">Most published · 7d</option><option value="published30">Most published · 30d</option><option value="intensity">Highest 7d intensity</option><option value="name">Company A–Z</option></select></label></div></div>
       <CompanyTable companies={profiles} />
     </section>
 
     <section class="dashboard-section" aria-labelledby="movement-title">
-      <div class="section-heading"><div><p class="section-kicker">04 / ROLE MOVEMENT</p><h2 id="movement-title">What changed?</h2></div><p>Fresh roles appear immediately. Until enough observed removals accumulate, the second panel shows the strongest 30-day publishing footprints.</p></div>
+      <div class="section-heading"><div><p class="section-kicker">05 / ROLE MOVEMENT</p><h2 id="movement-title">What changed?</h2></div><p>Fresh roles appear immediately. Until enough observed removals accumulate, the second panel shows the strongest 30-day publishing footprints.</p></div>
       <div class="activity-grid">
         <article class="activity-column">
           <header><h3>NEWLY OPENED</h3><span>LATEST OBSERVATIONS</span></header>
@@ -183,6 +220,36 @@ const base = import.meta.env.BASE_URL;
 
 <style>
   .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
+  .structure-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; border: 1px solid var(--line-strong); background: var(--line-strong); }
+  .structure-strip > div { padding: 14px 18px; background: var(--paper); }
+  .structure-strip strong { display: block; font: 500 30px/1 var(--display); letter-spacing: -.03em; }
+  .structure-strip span { display: block; margin-top: 6px; color: var(--orange); font: 600 7px var(--mono); letter-spacing: .08em; }
+  .structure-strip small { display: block; margin-top: 4px; color: var(--ink-soft); font-size: 9px; }
+  .sector-grid { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--line-strong); }
+  .sector-card { position: relative; display: flex; flex-direction: column; padding: 20px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); transition: background .2s ease; }
+  .sector-card:hover { background: #fffdf6; }
+  .sector-card:nth-child(3n) { border-right: 0; }
+  .sector-card::before { content: ''; position: absolute; inset: 0 0 auto; height: 5px; background: var(--sector); }
+  .sector-card header { display: flex; align-items: baseline; gap: 8px; }
+  .sector-card header i { width: 9px; height: 9px; background: var(--sector); }
+  .sector-card header strong { font-size: 13px; }
+  .sector-card header span { margin-left: auto; color: var(--ink-soft); font: 500 8px var(--mono); }
+  .sector-figure { margin: 14px 0 12px; }
+  .sector-figure b { display: block; font: 500 40px/.9 var(--display); letter-spacing: -.04em; }
+  .sector-figure span { color: var(--ink-soft); font: 600 7px var(--mono); letter-spacing: .08em; }
+  .sector-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
+  .sector-metrics span { display: block; color: var(--ink-soft); font: 600 6.5px var(--mono); letter-spacing: .06em; }
+  .sector-metrics strong { font: 500 15px var(--display); }
+  .sector-metrics strong.delta { color: var(--blue); }
+  .sector-metrics strong.down { color: #c2402c; }
+  .sector-card footer { margin-top: auto; padding-top: 10px; border-top: 1px solid var(--line); color: var(--blue); font: 600 7px/1.6 var(--mono); letter-spacing: .05em; }
+  .seniority-tape { display: grid; grid-template-columns: 200px repeat(7, 1fr); border: 1px solid var(--line-strong); border-top: 0; }
+  .seniority-tape > * { min-height: 66px; padding: 12px 14px; border-right: 1px solid var(--line); }
+  .seniority-tape .tape-label { display: grid; align-items: center; color: var(--ink-soft); background: var(--paper-deep); font: 600 9px var(--mono); letter-spacing: .08em; }
+  .seniority-tape > *:nth-child(8), .seniority-tape > *:last-child { border-right: 0; }
+  .seniority-tape div strong { display: block; font-size: 10px; }
+  .seniority-tape div span { display: block; margin: 2px 0 8px; color: var(--ink-soft); font: 500 8px var(--mono); }
+  .seniority-tape div i { position: relative; display: block; height: 5px; background: linear-gradient(90deg, var(--blue), var(--lime)); background-size: 620px 5px; }
   .callout-section { display: grid; place-items: center; }
   .callout-section .jobs-note { max-width: 620px; justify-self: center; padding: 40px; }
   .callout-section .jobs-note p { font-size: 34px; }
@@ -239,10 +306,10 @@ const base = import.meta.env.BASE_URL;
   .location-tape div small { display: block; color: var(--orange); font: 500 7px var(--mono); }
   .location-tape div strong { display: block; max-width: 180px; overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
   .location-tape div span { color: var(--ink-soft); font: 500 8px var(--mono); }
-  @media (max-width: 1050px) { .brief-grid { grid-template-columns: repeat(2, 1fr); } .brief-card:nth-child(2) { border-right: 0; } .brief-card:nth-child(-n+2) { border-bottom: 1px solid var(--line-strong); } }
+  @media (max-width: 1050px) { .brief-grid { grid-template-columns: repeat(2, 1fr); } .brief-card:nth-child(2) { border-right: 0; } .brief-card:nth-child(-n+2) { border-bottom: 1px solid var(--line-strong); } .sector-grid { grid-template-columns: repeat(2, 1fr); } .sector-card:nth-child(3n) { border-right: 1px solid var(--line); } .sector-card:nth-child(2n) { border-right: 0; } .seniority-tape { grid-template-columns: 200px repeat(4, 1fr); } .seniority-tape .tape-label { grid-column: 1 / -1; grid-row: auto; } .seniority-tape > * { border-top: 1px solid var(--line); } .structure-strip { grid-template-columns: 1fr; } }
   @media (max-width: 980px) { .location-tape { grid-template-columns: repeat(2, 1fr); } .location-tape .tape-label { grid-column: 1 / -1; grid-row: auto; } .location-tape > * { border-top: 1px solid var(--line); } .company-tools { flex-direction: column; width: 100%; } }
   @media (max-width: 800px) { .momentum-board { grid-template-columns: 1fr; } .momentum-board > aside { border-right: 0; border-bottom: 1px solid rgba(255,255,255,.22); } .momentum-board > aside > strong { margin-top: 25px; } .momentum-board > aside > small { margin-top: 25px; } }
   @media (max-width: 600px) { .momentum-list li { grid-template-columns: 28px minmax(130px, 1fr) 65px; padding: 9px 13px; } .momentum-bar { display: none; } }
-  @media (max-width: 620px) { .decision-brief > header { grid-template-columns: 1fr; } .brief-grid { grid-template-columns: 1fr; } .brief-card { min-height: 245px; border-right: 0; border-bottom: 1px solid var(--line-strong); } .brief-card:last-child { border-bottom: 0; } }
+  @media (max-width: 620px) { .decision-brief > header { grid-template-columns: 1fr; } .brief-grid { grid-template-columns: 1fr; } .brief-card { min-height: 245px; border-right: 0; border-bottom: 1px solid var(--line-strong); } .brief-card:last-child { border-bottom: 0; } .sector-grid { grid-template-columns: 1fr; } .sector-card { border-right: 0; } .seniority-tape { grid-template-columns: repeat(2, 1fr); } .seniority-tape .tape-label { grid-column: 1 / -1; } .seniority-tape div { border-right: 0; border-top: 1px solid var(--line); } }
   @media (max-width: 520px) { .location-tape { grid-template-columns: 1fr; } .location-tape div { border-right: 0; } .company-sort select { min-width: 150px; } }
 </style>

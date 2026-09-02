@@ -10,6 +10,7 @@
     "build": "npm run materialize && astro check && astro build",
     "preview": "astro preview",
     "collect": "tsx scripts/collect.ts",
+    "discover": "tsx scripts/discover.ts",
     "materialize": "tsx scripts/collect.ts --materialize",
     "collect:fixtures": "tsx scripts/collect.ts --fixtures",
     "test": "tsx --test tests/*.test.ts",

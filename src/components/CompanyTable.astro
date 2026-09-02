@@ -1,5 +1,6 @@
 ---
 import type { CompanyProfile } from '@/lib/types';
+import { SECTOR_COLORS } from '@/lib/types';
 interface Props { companies: CompanyProfile[]; }
 const { companies } = Astro.props;
 const base = import.meta.env.BASE_URL;
@@ -18,16 +19,17 @@ const published30 = companies.reduce((total, company) => total + company.publish
 </div>
 <div class="company-table-wrap">
   <table class="company-table">
-    <thead><tr><th>Company / symbol</th><th>Open roles</th><th title="Roles carrying a source publication date in the latest seven days">Published · 7d</th><th title="Latest seven-day publication count minus the preceding seven-day count">Vs prior · 7d</th><th title="Roles carrying a source publication date in the latest 30 days">Published · 30d</th><th title="Seven-day publications as a share of current openings">7d intensity</th><th>Primary build</th><th>Compare</th></tr></thead>
+    <thead><tr><th>Company / symbol</th><th>Sector</th><th>Open roles</th><th title="Roles carrying a source publication date in the latest seven days">Published · 7d</th><th title="Latest seven-day publication count minus the preceding seven-day count">Vs prior · 7d</th><th title="Roles carrying a source publication date in the latest 30 days">Published · 30d</th><th title="Seven-day publications as a share of current openings">7d intensity</th><th>Primary build</th><th>Compare</th></tr></thead>
     <tbody>
       {[...companies].sort((a, b) => b.currentOpenings - a.currentOpenings).map((company) => {
         const [primaryBuild, primaryCount] = dominantFunction(company) ?? ['Other', 0];
         const primaryShare = Math.round((Number(primaryCount) / Math.max(company.currentOpenings, 1)) * 100);
-        return <tr data-company-row data-search={`${company.name} ${company.ticker}`.toLowerCase()} data-name={company.name} data-openings={company.currentOpenings} data-acceleration={company.publicationDelta7d} data-published={company.published7d} data-published30={company.published30d} data-intensity={company.publicationIntensity7d}>
+        return <tr data-company-row data-search={`${company.name} ${company.ticker}`.toLowerCase()} data-name={company.name} data-sector={company.sector} data-openings={company.currentOpenings} data-acceleration={company.publicationDelta7d} data-published={company.published7d} data-published30={company.published30d} data-intensity={company.publicationIntensity7d} data-remote={company.remoteShare} data-median-open={company.medianOpenDays ?? -1}>
           <td><a class="company-identity" href={`${base}companies/${company.id}/`}>
             <span class="company-sigil" style={`--company:${company.color}`}>{company.ticker.slice(0, 2)}</span>
             <span><strong>{company.name}</strong><small>{company.exchange} · {company.ticker}</small></span>
           </a></td>
+          <td><span class="sector-chip" style={`--sector:${SECTOR_COLORS[company.sector]}`}>{company.sector}</span></td>
           <td>{company.currentOpenings.toLocaleString()}</td>
           <td>{company.published7d}</td>
           <td class:list={[{ delta: company.publicationDelta7d > 0, down: company.publicationDelta7d < 0 }]}>{signed(company.publicationDelta7d)}</td>
@@ -53,6 +55,9 @@ const published30 = companies.reduce((total, company) => total + company.publish
 <script is:inline type="application/json" id="company-compare-data" set:html={payload}></script>
 
 <script>
+  const sectorChipStyle = document.createElement('style');
+  sectorChipStyle.textContent = '.sector-chip { display: inline-block; padding: 3px 7px; border: 1px solid var(--line); border-left: 3px solid var(--sector, var(--blue)); color: var(--ink-soft); font: 500 8px var(--mono); letter-spacing: .04em; white-space: nowrap; }';
+  document.head.appendChild(sectorChipStyle);
   const companyData = JSON.parse(document.querySelector<HTMLScriptElement>('#company-compare-data')?.textContent || '[]');
   const selected = new Set<string>();
   const tray = document.querySelector<HTMLElement>('[data-compare-tray]');
@@ -88,17 +93,20 @@ const published30 = companies.reduce((total, company) => total + company.publish
   function filterRows() {
     const query = document.querySelector<HTMLInputElement>('[data-company-search]')?.value.toLowerCase().trim() || '';
     const mode = document.querySelector<HTMLSelectElement>('[data-company-filter]')?.value || 'all';
+    const sector = document.querySelector<HTMLSelectElement>('[data-sector-filter]')?.value || 'all';
     document.querySelectorAll<HTMLElement>('[data-company-row]').forEach((row) => {
       const matchesQuery = row.dataset.search?.includes(query);
       const matchesMode = mode === 'all'
         || (mode === 'accelerating' && Number(row.dataset.acceleration) > 0)
         || (mode === 'publishing' && Number(row.dataset.published) > 0)
         || (mode === 'scale' && Number(row.dataset.openings) >= 100);
-      row.hidden = !matchesQuery || !matchesMode;
+      const matchesSector = sector === 'all' || row.dataset.sector === sector;
+      row.hidden = !matchesQuery || !matchesMode || !matchesSector;
     });
   }
   document.querySelector<HTMLInputElement>('[data-company-search]')?.addEventListener('input', filterRows);
   document.querySelector<HTMLSelectElement>('[data-company-filter]')?.addEventListener('change', filterRows);
+  document.querySelector<HTMLSelectElement>('[data-sector-filter]')?.addEventListener('change', filterRows);
 
   document.querySelector<HTMLSelectElement>('[data-company-sort]')?.addEventListener('change', (event) => {
     const mode = (event.target as HTMLSelectElement).value;
@@ -126,6 +134,9 @@ const published30 = companies.reduce((total, company) => total + company.publish
         <div class="compare-number"><span>Vs prior 7 days</span><strong>${company.publicationDelta7d > 0 ? '+' : ''}${company.publicationDelta7d}</strong></div>
         <div class="compare-number"><span>Published · 30 days</span><strong>${company.published30d}</strong></div>
         <div class="compare-number"><span>7-day intensity</span><strong>${company.publicationIntensity7d.toFixed(1)}%</strong></div>
+        <div class="compare-number"><span>Remote-labeled roles</span><strong>${company.remoteShare}%</strong></div>
+        <div class="compare-number"><span>Median days posted</span><strong>${company.medianOpenDays ?? '—'}</strong></div>
+        <div class="compare-number"><span>Sector</span><strong>${escapeHtml(company.sector)}</strong></div>
         <div class="mini-bars">${Object.entries(company.functionCounts).map(([role, value]) => `<div><span>${escapeHtml(role)}</span><i style="width:${(Number(value) / maximum) * 100}%"></i><b>${Number(value)}</b></div>`).join('')}</div>
       </article>`).join('')}</div>`;
     dialog?.showModal();
