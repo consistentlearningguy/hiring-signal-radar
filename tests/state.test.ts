@@ -25,7 +25,12 @@ test('handles opened, updated, two-miss removal, and recovery', () => {
   const failure = mergeFailedSnapshot(firstMiss, '2026-08-04T12:00:00Z', new Error('timeout'));
   assert.equal(failure.jobs[job.id].missingCount, 1);
   assert.equal(failure.jobs[job.id].current, true);
-  assert.equal(failure.stale, true);
+  assert.equal(failure.stale, false);
+  assert.equal(failure.consecutiveFailures, 1);
+
+  const secondFailure = mergeFailedSnapshot(failure, '2026-08-04T13:00:00Z', new Error('timeout'));
+  assert.equal(secondFailure.stale, true);
+  assert.equal(secondFailure.consecutiveFailures, 2);
 
   const removed = mergeSuccessfulSnapshot(failure, [], '2026-08-05T12:00:00Z', '2026-08-05');
   assert.equal(removed.jobs[job.id].current, false);

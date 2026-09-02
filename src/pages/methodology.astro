@@ -22,7 +22,7 @@ const status = statusRaw as CollectionStatus;
       <section class="method-section">
         <p class="section-kicker">02 / ROLE STATE</p><h2>Absence is not immediately removal</h2>
         <p>A role is newly opened on the first successful collection where it appears. It is not marked removed until it is missing from <strong>two consecutive successful collections</strong>. A failed API request does not increment that count.</p>
-        <p>When a source fails, its last valid snapshot stays in place and the company is visibly marked stale. This avoids turning an outage into a false mass-removal signal.</p>
+        <p>When a source fails twice in a row, its last valid snapshot stays in place and the company is visibly marked stale. A single transient failure never flags a source. This avoids turning an outage into a false mass-removal signal.</p>
       </section>
       <section class="method-section">
         <p class="section-kicker">03 / CLASSIFICATION</p><h2>Deterministic, inspectable rules</h2>

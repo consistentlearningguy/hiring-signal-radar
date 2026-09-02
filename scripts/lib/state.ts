@@ -57,11 +57,12 @@ export function mergeSuccessfulSnapshot(
 
 export function mergeFailedSnapshot(prior: CompanyState | undefined, timestamp: string, error: unknown): CompanyState {
   const previous = prior ?? emptyCompanyState();
+  const consecutiveFailures = previous.consecutiveFailures + 1;
   return {
     ...previous,
     lastAttempt: timestamp,
-    consecutiveFailures: previous.consecutiveFailures + 1,
-    stale: true,
+    consecutiveFailures,
+    stale: consecutiveFailures >= 2,
     error: error instanceof Error ? error.message : String(error)
   };
 }
