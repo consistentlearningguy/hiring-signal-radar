@@ -19,3 +19,4 @@ npm-debug.log*
 /discovered-*.json
 /candidate-tokens.txt
 /*-check.json
+/AGENTS.md
